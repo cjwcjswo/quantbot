@@ -73,7 +73,7 @@ def test_exhaustion_breakout_then_retest(config):
     assert eng.retests.get("BTCUSDT") is not None  # pending registered
 
     # retest candle: pulls back to the level (100) and holds, close > open
-    retest = candle(interval="1", o="99.95", h="100.1", l="99.9", c="100.05")
+    retest = candle(interval="1", o="99.95", h="100.1", l="99.9", c="100.01")
     candles.append(retest)
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None

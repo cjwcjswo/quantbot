@@ -9,6 +9,7 @@ from apps.bot.runtime import BotRuntime
 from packages.config import load_app_config
 from packages.config.settings import Secrets
 from packages.core.enums import (
+    BotMode,
     BotState,
     EntryMode,
     OrderStatus,
@@ -30,8 +31,10 @@ from tests.fakes import FakeGateway
 from tests.fakes.builders import series_from_closes, symbol_meta, ticker
 
 
-def _runtime(redis, gateway=None):
+def _runtime(redis, gateway=None, *, mode=None):
     cfg = load_app_config("config/quantbot.yaml")
+    if mode is not None:
+        cfg.bot.mode = mode
     secrets = Secrets()
     return BotRuntime(cfg, secrets, redis=redis, gateway=gateway or FakeGateway())
 
@@ -48,7 +51,7 @@ async def test_boots_to_standby_not_running(redis):
     assert rt.state_machine.state == BotState.STANDBY
     assert not rt.state_machine.can_enter_new_position()
     # mode + status published to Redis
-    assert await redis.get(state_keys.BOT_MODE) == "PAPER"
+    assert await redis.get(state_keys.BOT_MODE) == "LIVE"
     assert await redis.get(state_keys.BOT_STATUS) == "STANDBY"
     await rt.shutdown()
 
@@ -111,7 +114,7 @@ async def test_scanner_refresh_populates_runtime_watchlist(redis):
         "15",
         series_from_closes(["100"] * 80, symbol="BTCUSDT", interval="15"),
     )
-    rt = _runtime(redis, gw)
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
     await rt.startup()
     await rt._collector.refresh_tickers()
     await rt._refresh_watchlist_if_due(force=True)
@@ -129,7 +132,7 @@ async def test_trading_cycle_publishes_watchlist(redis):
     for tf in ("1", "5", "15"):
         gw.set_kline("BTCUSDT", tf,
                      series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
-    rt = _runtime(redis, gw)
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
     await rt.startup()
     rt.state_machine.force(BotState.RUNNING, reason="test")
     await rt._trading_cycle()
@@ -147,7 +150,7 @@ async def test_trading_cycle_publishes_watchlist(redis):
 async def test_close_position_command_closes_bot_position(redis):
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1"))
-    rt = _runtime(redis, gw)
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
     await rt.startup()
     rt.state_machine.force(BotState.RUNNING, reason="test")
     assert rt._paper_engine is not None
@@ -174,7 +177,7 @@ async def test_close_position_command_closes_bot_position(redis):
 async def test_close_position_command_respects_percent(redis):
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1"))
-    rt = _runtime(redis, gw)
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
     await rt.startup()
     rt.state_machine.force(BotState.RUNNING, reason="test")
     assert rt._paper_engine is not None
@@ -206,7 +209,7 @@ async def test_close_position_command_respects_percent(redis):
 async def test_stop_command_applies_cancel_and_close_options(redis):
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1"))
-    rt = _runtime(redis, gw)
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
     await rt.startup()
     rt.state_machine.force(BotState.RUNNING, reason="test")
     assert rt._paper_engine is not None
@@ -274,6 +277,24 @@ async def test_reload_config_rebuilds_runtime_modules_without_resetting_paper_wa
     assert rt._trading.cfg.risk.account_risk_per_trade_percent == 0.5
     assert rt._paper_engine.slippage == Decimal("0.2")
     assert rt._paper_engine.balance == Decimal("9000")
+    await rt.shutdown()
+
+
+async def test_reload_config_applies_bot_mode_env_override(redis, tmp_path, monkeypatch):
+    initial = tmp_path / "initial.yaml"
+    updated = tmp_path / "updated.yaml"
+    initial.write_text('bot:\n  mode: "PAPER"\n', encoding="utf-8")
+    updated.write_text('bot:\n  mode: "PAPER"\n', encoding="utf-8")
+    rt = _runtime_with_config(redis, initial)
+    await rt.startup()
+    rt.secrets.quantbot_config = str(updated)
+    monkeypatch.setenv("BOT_MODE", "LIVE")
+
+    await rt.handle_command(Command(type=CommandType.RELOAD_CONFIG))
+
+    assert rt.config.bot.mode == BotMode.LIVE
+    assert rt._trading is not None
+    assert rt._trading.mode == BotMode.LIVE
     await rt.shutdown()
 
 

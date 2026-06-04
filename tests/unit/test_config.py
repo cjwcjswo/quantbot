@@ -12,12 +12,12 @@ def test_loads_repo_config():
     """The shipped config/quantbot.yaml validates and matches doc defaults."""
     cfg = load_app_config("config/quantbot.yaml")
     assert isinstance(cfg, AppConfig)
-    assert cfg.bot.mode == BotMode.PAPER
+    assert cfg.bot.mode == BotMode.LIVE
     assert cfg.bot.start_state == BotState.STANDBY
     assert cfg.paper.initial_balance_usdt == 10000
     assert cfg.orders.live_new_entry_market_order_allowed is False
     assert cfg.risk.account_risk_per_trade_percent == 1.0
-    assert cfg.entry.anti_chase.max_rsi_long == 68
+    assert cfg.entry.anti_chase.max_rsi_long == 72
     assert cfg.position_protection.max_seconds_position_without_tpsl == 3
     assert cfg.reconciliation.interval_sec_when_flat == 10
 

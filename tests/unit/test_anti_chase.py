@@ -35,7 +35,7 @@ def test_long_not_blocked_when_calm(config):
 def test_long_blocked_overbought(config):
     ac = AntiChase(config)
     candles = _flat_1m()
-    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="70", volume_ratio="1.0")
+    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="73", volume_ratio="1.0")
     assert ac.block_long(s, candles, metrics_of(candles[-1])) == "RSI_OVERBOUGHT"
 
 
@@ -50,9 +50,9 @@ def test_long_blocked_single_candle_spike(config):
     ac = AntiChase(config)
     # Flats near 101 keep the 3-candle run-up small so the single-candle rule fires.
     candles = _flat_1m(price="101")
-    spike = candle(interval="1", o="101.3", h="102.5", l="101.2", c="102.3")  # +1.0 body
+    spike = candle(interval="1", o="101.3", h="102.9", l="101.2", c="102.7")  # +1.4 body
     candles[-1] = spike
-    s = snap(timeframe="1", close="102.3", ema20="102", atr="1", rsi="60", volume_ratio="1.0")
+    s = snap(timeframe="1", close="102.7", ema20="102.4", atr="1", rsi="60", volume_ratio="1.0")
     assert ac.block_long(s, candles, metrics_of(spike)) == "SINGLE_CANDLE_SPIKE"
 
 
@@ -69,7 +69,7 @@ def test_long_blocked_weak_close(config):
 def test_short_blocked_oversold(config):
     ac = AntiChase(config)
     candles = _flat_1m()
-    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="30", volume_ratio="1.0")
+    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="27", volume_ratio="1.0")
     assert ac.block_short(s, candles, metrics_of(candles[-1])) == "RSI_OVERSOLD"
 
 

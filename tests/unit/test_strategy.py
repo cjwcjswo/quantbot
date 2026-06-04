@@ -74,7 +74,7 @@ def test_no_signal_when_atr_out_of_band(config):
     snaps = _long_snaps()
     snaps["5"] = snap(
         timeframe="5", close="100.5", ema20="100", ema50="99",
-        rsi="60", atr="1", atr_percent="0.2", volume_ratio="1.0",  # < 0.5
+        rsi="60", atr="1", atr_percent="0.1", volume_ratio="1.0",  # < 0.15
     )
     strat = TrendFollowingStrategy(config)
     assert strat.evaluate(StrategyContext("BTCUSDT", snaps)) is None

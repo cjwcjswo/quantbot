@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from decimal import Decimal
 from typing import Any
@@ -72,6 +73,18 @@ from packages.strategy import StrategyRegistry, TrendFollowingStrategy
 from packages.universe import UniverseManager
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_mode_env_override(config: AppConfig) -> None:
+    raw = os.environ.get("BOT_MODE")
+    if not raw:
+        return
+    try:
+        config.bot.mode = BotMode(raw.strip().upper())
+    except ValueError:
+        logger.warning("ignoring invalid BOT_MODE=%r (expected PAPER or LIVE)", raw)
+        return
+    logger.info("BOT_MODE override -> %s", config.bot.mode.value)
 
 
 class BotRuntime:
@@ -828,8 +841,13 @@ class BotRuntime:
         from packages.config import load_app_config
 
         self.config = load_app_config(self.secrets.quantbot_config)
+        _apply_mode_env_override(self.config)
         self._build_trading()
         self._build_reconciler()
+        if self._heartbeat is not None and self._lock is not None:
+            self._heartbeat = Heartbeat(
+                self._redis, self._lock, self.state_machine, self.config.bot.mode
+            )
         if self._state_publisher is not None:
             self._state_publisher = StatePublisher(self._redis, self.config.bot.mode)
         logger.info("Config reloaded and runtime modules rebuilt")

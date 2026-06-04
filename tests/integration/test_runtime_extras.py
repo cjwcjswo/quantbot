@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from apps.bot.runtime import BotRuntime
 from packages.config import load_app_config
 from packages.config.settings import Secrets
-from packages.core.enums import BotState
+from packages.core.enums import BotMode, BotState
 from packages.guards import ClockSyncGuard
 from packages.reconciliation.reconciliation_manager import ReconcileResult
 from packages.storage import (
@@ -20,8 +20,10 @@ from tests.fakes import FakeGateway
 from tests.fakes.builders import ticker
 
 
-def _runtime(redis, session_factory, gateway=None):
+def _runtime(redis, session_factory, gateway=None, *, mode=None):
     cfg = load_app_config("config/quantbot.yaml")
+    if mode is not None:
+        cfg.bot.mode = mode
     return BotRuntime(
         cfg, Secrets(), redis=redis, gateway=gateway or FakeGateway(),
         trade_logger=TradeLogger(session_factory),
@@ -56,7 +58,7 @@ async def test_reconciliation_mismatch_trips_risk_lock(redis, session_factory):
 
 
 async def test_pnl_persisted(redis, session_factory):
-    rt = _runtime(redis, session_factory)
+    rt = _runtime(redis, session_factory, mode=BotMode.PAPER)
     await rt.startup()
     await rt._publish_and_persist_pnl()
     assert await _count(session_factory, DailyPnlRow) == 1
