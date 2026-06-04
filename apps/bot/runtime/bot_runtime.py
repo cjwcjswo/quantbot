@@ -380,6 +380,22 @@ class BotRuntime:
             except asyncio.TimeoutError:
                 pass
 
+    async def _equity_snapshot(self, marks: dict[str, Decimal]) -> Decimal:
+        """Account equity for the dashboard: LIVE Bybit wallet or PAPER virtual wallet.
+
+        Without this, ``bot:pnl`` has no equity and the dashboard shows "-" in LIVE
+        (the PAPER snapshot table it otherwise falls back to is empty in LIVE).
+        """
+        if self.config.bot.mode == BotMode.LIVE:
+            try:
+                return (await self._gateway.get_wallet_balance()).equity
+            except Exception:
+                logger.debug("wallet balance fetch failed; using last equity")
+                return self._last_equity
+        if self._paper_engine is not None:
+            return self._paper_engine.wallet(marks).equity
+        return self._last_equity
+
     async def _publish_state(self) -> None:
         if self._state_publisher is None:
             return
@@ -393,6 +409,7 @@ class BotRuntime:
                 "unrealized": str(snap.unrealized),
                 "fees": str(snap.fees),
                 "net": str(snap.net),
+                "equity": str(self._last_equity),
             },
             risk_status=self._risk_status(),
             protection_status=self._protection_status(),
@@ -423,12 +440,14 @@ class BotRuntime:
             marks = {t.symbol: t.last_price for t in self._collector.tickers()}
         positions = list(self.runtime_state.positions.values())
         snap = compute_pnl(positions, marks)
+        equity = await self._equity_snapshot(marks)
+        self._last_equity = equity
         if self._state_publisher is not None:
             await self._state_publisher.publish(
                 state=self.state_machine.state,
                 positions=list(self.runtime_state.positions.values()),
                 pnl={"realized": str(snap.realized), "unrealized": str(snap.unrealized),
-                     "fees": str(snap.fees), "net": str(snap.net)},
+                     "fees": str(snap.fees), "net": str(snap.net), "equity": str(equity)},
                 risk_status=self._risk_status(),
                 protection_status=self._protection_status(),
                 reconciliation_status=self._last_reconciliation_status,
