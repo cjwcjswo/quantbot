@@ -1,0 +1,159 @@
+"""Tests for ReconciliationManager + ManualInterventionHandler (impl doc §4)."""
+
+from decimal import Decimal
+
+from apps.bot.runtime.runtime_state import RuntimeState
+from packages.core.enums import (
+    EntryMode,
+    PositionSide,
+    PositionSource,
+    PositionStatus,
+)
+from packages.core.events import BotEventType
+from packages.core.models import ExchangeOrder, ExchangePosition, Position
+from packages.core.enums import OrderStatus, Side
+from packages.messaging import EventBus
+from packages.reconciliation import ManualInterventionHandler, ReconciliationManager
+from tests.fakes import FakeGateway
+
+
+def _make(config, events):
+    state = RuntimeState()
+    bus = EventBus(redis=None, sink=events)
+    handler = ManualInterventionHandler(state, bus, config.manual_intervention)
+    gw = FakeGateway()
+    recon = ReconciliationManager(gw, state, handler, bus, config.reconciliation)
+    return state, gw, recon
+
+
+def _bot_position(symbol="BTCUSDT", qty="1", avg="100"):
+    return Position(
+        symbol=symbol,
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal(qty),
+        avg_entry_price=Decimal(avg),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM,
+        signal_score=Decimal("7"),
+        strategy_reason="trend long",
+    )
+
+
+async def test_external_position_adopted(config, events):
+    state, gw, recon = _make(config, events)
+    gw.set_position(
+        ExchangePosition(
+            symbol="ETHUSDT", side=PositionSide.SHORT,
+            size=Decimal("2"), avg_price=Decimal("2000"),
+        )
+    )
+    result = await recon.reconcile_once()
+    assert "ETHUSDT" in result.external_positions
+    adopted = state.get_position("ETHUSDT")
+    assert adopted.source == PositionSource.EXTERNAL
+    assert not adopted.is_bot_managed
+    assert state.new_entries_paused()
+    assert BotEventType.EXTERNAL_POSITION_DETECTED in events.types()
+
+
+async def test_manual_add_reflected_without_new_signal(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="1", avg="100")
+    state.positions["BTCUSDT"] = pos
+    # Bybit shows a larger position at a boosted avg price (manual add).
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1.5"), avg_price=Decimal("101"),
+        )
+    )
+    await recon.reconcile_once()
+    assert pos.qty == Decimal("1.5")
+    assert pos.avg_entry_price == Decimal("101")
+    assert pos.manual_added_qty == Decimal("0.5")
+    # signal context preserved (impl doc §4.4 note)
+    assert pos.entry_mode == EntryMode.BREAKOUT_CONFIRM
+    assert pos.signal_score == Decimal("7")
+    assert state.new_entries_paused()
+    assert BotEventType.MANUAL_ADD_DETECTED in events.types()
+
+
+async def test_manual_partial_close_reflected(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="2", avg="100")
+    state.positions["BTCUSDT"] = pos
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1.2"), avg_price=Decimal("100"),
+        )
+    )
+    await recon.reconcile_once()
+    assert pos.qty == Decimal("1.2")
+    assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED in events.types()
+
+
+async def test_external_close_marks_closed(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="1")
+    state.positions["BTCUSDT"] = pos
+    # gw reports no position for BTCUSDT
+    await recon.reconcile_once()
+    assert pos.status == PositionStatus.CLOSED
+    assert BotEventType.POSITION_CLOSED_EXTERNALLY in events.types()
+
+
+async def test_external_order_detected_not_cancelled(config, events):
+    state, gw, recon = _make(config, events)
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol="BTCUSDT", order_id="ext-1", client_order_id=None,
+            side=Side.BUY, order_type="Limit",
+            price=Decimal("90"), qty=Decimal("1"), status=OrderStatus.NEW,
+        )
+    )
+    result = await recon.reconcile_once()
+    assert "ext-1" in result.external_orders
+    assert "ext-1" in state.external_orders
+    assert gw.cancelled == []  # never auto-cancel (impl doc §4.3)
+    assert state.new_entries_paused()
+
+
+async def test_known_order_not_flagged_external(config, events):
+    state, gw, recon = _make(config, events)
+    from packages.core.models import Order
+    from packages.core.enums import OrderType
+
+    state.orders["c1"] = Order(
+        symbol="BTCUSDT", side=Side.BUY, order_type=OrderType.LIMIT,
+        qty=Decimal("1"), client_order_id="c1", order_id="known-1",
+    )
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol="BTCUSDT", order_id="known-1", client_order_id="c1",
+            side=Side.BUY, order_type="Limit",
+            price=Decimal("90"), qty=Decimal("1"),
+        )
+    )
+    result = await recon.reconcile_once()
+    assert result.external_orders == []
+
+
+async def test_in_sync_no_events(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="1", avg="100")
+    state.positions["BTCUSDT"] = pos
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1"), avg_price=Decimal("100"),
+            liq_price=Decimal("80"), unrealized_pnl=Decimal("5"),
+        )
+    )
+    await recon.reconcile_once()
+    assert pos.liq_price == Decimal("80")
+    assert pos.unrealized_pnl == Decimal("5")
+    assert not state.new_entries_paused()
+    # only the RECONCILED summary event
+    assert events.types() == [BotEventType.RECONCILED]

@@ -1,0 +1,219 @@
+bot:
+  mode: "PAPER"
+  account_currency: "USDT"
+  category: "linear"
+  quote_coin: "USDT"
+  start_state: "STANDBY"
+  max_active_positions: 5
+  max_symbols_to_watch: 30
+  heartbeat_interval_sec: 5
+
+exchange:
+  name: "bybit"
+  use_testnet: false
+  recv_window: 5000
+  use_pybit: true
+
+paper:
+  initial_balance_usdt: 10000
+  all_orders_as_market: true
+  market_slippage_percent: 0.03
+  taker_fee_percent: 0.055
+  funding_fee_enabled: false
+
+universe:
+  include_quote_coin: "USDT"
+  min_24h_turnover_usdt: 50000000
+  exclude_new_listing_days: 14
+  exclude_symbols: []
+  include_symbols: []
+
+scanner:
+  refresh_interval_sec: 300
+  max_candidates: 30
+  min_atr_percent: 0.5
+  max_atr_percent: 5.0
+  max_spread_percent: 0.08
+  min_orderbook_depth_usdt_0_1_percent: 100000
+  min_orderbook_depth_usdt_0_3_percent: 300000
+
+trend_quality:
+  min_ema_gap_percent_15m: 0.15
+  min_ema20_slope_atr_15m: 0.05
+  min_close_distance_from_ema20_atr_15m: 0.10
+
+volume:
+  min_setup_volume_ratio: 0.8
+  min_breakout_volume_ratio: 1.5
+  max_exhaustion_volume_ratio: 4.0
+
+candle_quality:
+  max_rejection_wick_ratio: 0.45
+  max_opposite_wick_ratio_for_breakout: 0.35
+  min_body_ratio_for_breakout: 0.45
+  long_min_close_position_in_range: 0.75
+  short_max_close_position_in_range: 0.25
+
+entry:
+  enabled_modes:
+    pre_breakout_scout: true
+    breakout_confirm: true
+    retest_confirm: true
+
+  pre_breakout:
+    min_score: 8
+    position_fraction: 0.30
+    stop_atr: 0.7
+
+  breakout_confirm:
+    position_fraction: 0.30
+    volume_min_ratio: 1.5
+    require_close_beyond_boundary: true
+    close_beyond_boundary_atr: 0.05
+    stop_atr: 1.0
+
+  retest_confirm:
+    position_fraction: 0.40
+    retest_tolerance_atr: 0.25
+    max_wait_candles: 8
+    stop_atr: 1.0
+
+  anti_chase:
+    enabled: true
+    max_rsi_long: 68
+    min_rsi_short: 32
+    max_distance_from_ema20_atr: 1.2
+    max_recent_3_candle_move_atr: 1.5
+    max_single_candle_move_atr: 1.0
+
+orders:
+  live_new_entry_market_order_allowed: false
+  scout_order_type: "LIMIT"
+  breakout_order_type: "AGGRESSIVE_LIMIT"
+  retest_order_type: "LIMIT"
+  max_slippage_percent: 0.05
+  limit_order_ttl_sec: 10
+  limit_reorder_attempts: 1
+  aggressive_limit_time_in_force: "IOC"
+  use_reduce_only_for_exits: true
+  partial_fill_min_ratio_to_keep: 0.70
+  partial_fill_below_min_action: "CLOSE_FILLED_QTY"
+
+risk:
+  account_risk_per_trade_percent: 1.0
+  daily_max_loss_percent: 5.0
+  intraday_drawdown_percent: 3.0
+  max_symbol_risk_percent: 1.0
+  max_total_open_risk_percent: 5.0
+  max_same_direction_positions: 4
+  min_leverage: 1
+  scout_max_leverage: 3
+  breakout_max_leverage: 5
+  retest_max_leverage: 6
+  high_quality_max_leverage: 8
+  high_atr_max_leverage: 3
+  isolated_margin: true
+
+liquidation_guard:
+  min_liquidation_distance_percent: 2.0
+  min_liquidation_distance_atr: 2.0
+  block_if_liq_price_inside_stop: true
+
+tpsl:
+  initial_take_profit_r: 2.0
+  use_exchange_tpsl: true
+  tp_trigger_by: "LastPrice"
+  sl_trigger_by: "LastPrice"
+  tpsl_mode: "Full"
+
+position_protection:
+  stop_mode: "EXCHANGE_TPSL"
+  require_tpsl_after_entry: true
+  max_seconds_position_without_tpsl: 3
+  emergency_close_if_tpsl_missing: true
+  verify_tpsl_after_entry: true
+  verify_tpsl_retry_count: 3
+  verify_tpsl_retry_interval_sec: 1
+
+position:
+  partial_take_profit_r: 2.0
+  partial_take_profit_fraction: 0.50
+  trailing_start_r: 2.0
+  trailing_atr_multiplier: 2.0
+  trailing_extended_after_r: 5.0
+  trailing_extended_atr_multiplier: 2.5
+  max_holding_minutes: 180
+
+stagnation_exit:
+  enabled: true
+  pre_breakout_scout:
+    max_bars_without_breakout: 8
+  breakout_confirm:
+    reduce_after_bars: 5
+    reduce_fraction: 0.5
+    max_bars_without_1r: 10
+  retest_confirm:
+    tighten_after_bars: 6
+    max_bars_without_1r: 12
+
+cooldown:
+  symbol_cooldown_after_loss_min: 15
+  symbol_cooldown_after_2_losses_min: 60
+  global_cooldown_after_3_losses_min: 30
+  entry_mode_cooldown_after_loss_min: 20
+
+global_kill_switch:
+  daily_loss_percent: 5.0
+  intraday_drawdown_percent: 3.0
+  consecutive_losses: 4
+  order_failures_in_5min: 3
+  websocket_disconnects_in_10min: 3
+  unexpected_position_mismatch_count: 1
+  emergency_close_failure_count: 1
+  max_slippage_percent_breach_count: 2
+
+reconciliation:
+  interval_sec_when_flat: 10
+  interval_sec_when_position_open: 3
+  interval_sec_after_order_event: 1
+  run_on_startup: true
+  run_after_ws_reconnect: true
+  run_after_order_timeout: true
+  source_of_truth: "exchange"
+
+manual_intervention:
+  allow_external_orders: true
+  pause_new_entries_on_external_change: true
+  pause_seconds_after_external_change: 60
+  adopt_external_positions: true
+  manage_adopted_positions: false
+  cancel_external_open_orders: false
+
+data_quality:
+  max_kline_delay_sec: 5
+  max_ticker_delay_sec: 3
+  max_orderbook_delay_sec: 3
+  max_missing_candles: 1
+  block_if_candle_gap_detected: true
+  max_ticker_kline_price_divergence_percent: 0.3
+
+clock_sync:
+  max_time_drift_ms: 500
+  sync_interval_sec: 60
+  block_trading_if_drift_ms_above: 1000
+
+api_rate_limit:
+  max_rest_requests_per_second: 5
+  max_order_requests_per_second: 2
+  backoff_base_sec: 1
+  backoff_max_sec: 30
+
+funding_guard:
+  enabled: true
+  block_new_entries_before_funding_min: 10
+  block_if_abs_funding_rate_percent_above: 0.05
+  reduce_position_if_abs_funding_rate_percent_above: 0.10
+
+symbol_status:
+  refresh_interval_sec: 300
+  block_if_status_not_trading: true

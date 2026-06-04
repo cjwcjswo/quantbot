@@ -1,0 +1,154 @@
+"""PositionProtectionManager: LIVE TP/SL set + verify + emergency close (impl doc §5).
+
+After a LIVE entry fills, the position is NOT ACTIVE until exchange TP/SL is set
+and verified (impl doc §5.1, §14.1):
+
+```
+set Trading Stop
+-> re-read TP/SL (retry up to N times at interval)
+-> protected => position ACTIVE
+-> not protected => reduce-only MARKET emergency close
+     close ok   => ORDER_LOCKED
+     close fail => EMERGENCY_STOP
+```
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from decimal import Decimal
+
+from packages.config.settings import AppConfig
+from packages.core.enums import PositionSide, PositionStatus, Side, TriggerBy
+from packages.core.events import BotEvent, BotEventType
+from packages.core.models import Position, TradingStopRequest
+from packages.exchange import ExchangeGateway
+from packages.execution import OrderManager
+from packages.messaging import EventBus
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ProtectionResult:
+    protected: bool
+    tp: Decimal | None = None
+    sl: Decimal | None = None
+    reason: str = ""
+    emergency: bool = False  # an emergency close was attempted
+    closed: bool = False  # emergency close succeeded
+
+
+class PositionProtectionManager:
+    def __init__(
+        self,
+        gateway: ExchangeGateway,
+        order_manager: OrderManager,
+        event_bus: EventBus,
+        config: AppConfig,
+        *,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        trade_logger=None,
+    ) -> None:
+        self._gw = gateway
+        self._om = order_manager
+        self._events = event_bus
+        self.cfg = config
+        self._sleep = sleep
+        self._logger = trade_logger
+
+    async def _confirm_position(self, position: Position) -> None:
+        """Confirm the exchange position before setting TP/SL (impl doc §5.2 step 3)."""
+        try:
+            positions = await self._gw.get_positions()
+        except Exception:  # noqa: BLE001 - confirmation is best-effort
+            return
+        match = next(
+            (p for p in positions if p.symbol == position.symbol and p.side is not None),
+            None,
+        )
+        if match is not None and match.size > 0:
+            # Trust the exchange size for full-position protection.
+            position.qty = match.size
+            position.avg_entry_price = match.avg_price
+
+    async def protect(self, position: Position) -> ProtectionResult:
+        """Set and verify TP/SL for a freshly-filled LIVE position (impl doc §5.2)."""
+        pp = self.cfg.position_protection
+        tpsl = self.cfg.tpsl
+        await self._confirm_position(position)
+        tp, sl = position.take_profit_price, position.stop_loss_price
+
+        await self._gw.set_trading_stop(
+            TradingStopRequest(
+                symbol=position.symbol,
+                take_profit=tp,
+                stop_loss=sl,
+                tp_trigger_by=TriggerBy(tpsl.tp_trigger_by),
+                sl_trigger_by=TriggerBy(tpsl.sl_trigger_by),
+                tpsl_mode=tpsl.tpsl_mode,
+            )
+        )
+        await self._events.publish(
+            BotEvent(type=BotEventType.TPSL_SET, symbol=position.symbol,
+                     data={"tp": str(tp), "sl": str(sl)})
+        )
+        if self._logger is not None:
+            await self._logger.log_protection(position.symbol, "TPSL_SET", tp=tp, sl=sl)
+
+        if pp.verify_tpsl_after_entry and await self._verify(position):
+            position.status = PositionStatus.ACTIVE
+            await self._events.publish(
+                BotEvent(type=BotEventType.TPSL_VERIFIED, symbol=position.symbol)
+            )
+            if self._logger is not None:
+                await self._logger.log_protection(
+                    position.symbol, "TPSL_VERIFIED", tp=tp, sl=sl
+                )
+            return ProtectionResult(protected=True, tp=tp, sl=sl)
+
+        return await self._emergency_close(position)
+
+    async def _verify(self, position: Position) -> bool:
+        pp = self.cfg.position_protection
+        for attempt in range(pp.verify_tpsl_retry_count):
+            state = await self._gw.get_position_tpsl(position.symbol)
+            if state.is_protected:
+                return True
+            if attempt < pp.verify_tpsl_retry_count - 1:
+                await self._sleep(pp.verify_tpsl_retry_interval_sec)
+        return False
+
+    async def _emergency_close(self, position: Position) -> ProtectionResult:
+        """TP/SL missing => flatten with reduce-only MARKET (impl doc §5.5, §17.3)."""
+        await self._events.publish(
+            BotEvent(type=BotEventType.EMERGENCY_TPSL_FAILED, symbol=position.symbol,
+                     message="TP/SL set/verify failed")
+        )
+        if self._logger is not None:
+            await self._logger.log_protection(
+                position.symbol, "EMERGENCY_TPSL_FAILED", success=False
+            )
+        exit_side = Side.SELL if position.side == PositionSide.LONG else Side.BUY
+        outcome = await self._om.place_exit(
+            symbol=position.symbol, side=exit_side, qty=position.qty
+        )
+        if outcome.is_filled:
+            position.status = PositionStatus.CLOSED
+            await self._events.publish(
+                BotEvent(type=BotEventType.EMERGENCY_CLOSE, symbol=position.symbol,
+                         message="position flattened -> ORDER_LOCKED")
+            )
+            return ProtectionResult(
+                protected=False, reason="ORDER_LOCKED", emergency=True, closed=True
+            )
+        return ProtectionResult(
+            protected=False, reason="EMERGENCY_STOP", emergency=True, closed=False
+        )
+
+    async def resync(self, position: Position) -> ProtectionResult:
+        """Re-apply full-size TP/SL after a manual qty change (impl doc §4.4)."""
+        return await self.protect(position)

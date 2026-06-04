@@ -1,0 +1,367 @@
+"""Typed configuration models and loaders (impl doc §7).
+
+``AppConfig`` mirrors ``config/quantbot.yaml`` one-to-one. ``Secrets`` reads
+infra credentials from the environment / ``.env`` so secrets never live in YAML.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import yaml
+from pydantic import BaseModel, ConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from packages.core.enums import BotMode, BotState
+from packages.core.errors import ConfigError
+
+
+class _Section(BaseModel):
+    # Forbid unknown keys so YAML typos surface immediately.
+    model_config = ConfigDict(extra="forbid")
+
+
+# --------------------------------------------------------------------------- #
+# Section models (field names match YAML keys exactly).
+# --------------------------------------------------------------------------- #
+class BotSection(_Section):
+    mode: BotMode = BotMode.PAPER
+    account_currency: str = "USDT"
+    category: str = "linear"
+    quote_coin: str = "USDT"
+    start_state: BotState = BotState.STANDBY
+    max_active_positions: int = 5
+    max_symbols_to_watch: int = 30
+    heartbeat_interval_sec: int = 5
+
+
+class ExchangeSection(_Section):
+    name: str = "bybit"
+    use_testnet: bool = False
+    recv_window: int = 5000
+    use_pybit: bool = True
+
+
+class PaperSection(_Section):
+    initial_balance_usdt: float = 10000
+    all_orders_as_market: bool = True
+    market_slippage_percent: float = 0.03
+    taker_fee_percent: float = 0.055
+    funding_fee_enabled: bool = False
+
+
+class UniverseSection(_Section):
+    include_quote_coin: str = "USDT"
+    min_24h_turnover_usdt: float = 50_000_000
+    exclude_new_listing_days: int = 14
+    exclude_symbols: list[str] = []
+    include_symbols: list[str] = []
+
+
+class ScannerSection(_Section):
+    refresh_interval_sec: int = 300
+    max_candidates: int = 30
+    min_atr_percent: float = 0.5
+    max_atr_percent: float = 5.0
+    max_spread_percent: float = 0.08
+    min_orderbook_depth_usdt_0_1_percent: float = 100_000
+    min_orderbook_depth_usdt_0_3_percent: float = 300_000
+
+
+class TrendQualitySection(_Section):
+    min_ema_gap_percent_15m: float = 0.15
+    min_ema20_slope_atr_15m: float = 0.05
+    min_close_distance_from_ema20_atr_15m: float = 0.10
+
+
+class VolumeSection(_Section):
+    min_setup_volume_ratio: float = 0.8
+    min_breakout_volume_ratio: float = 1.5
+    max_exhaustion_volume_ratio: float = 4.0
+
+
+class CandleQualitySection(_Section):
+    max_rejection_wick_ratio: float = 0.45
+    max_opposite_wick_ratio_for_breakout: float = 0.35
+    min_body_ratio_for_breakout: float = 0.45
+    long_min_close_position_in_range: float = 0.75
+    short_max_close_position_in_range: float = 0.25
+
+
+class EntryEnabledModes(_Section):
+    pre_breakout_scout: bool = True
+    breakout_confirm: bool = True
+    retest_confirm: bool = True
+
+
+class PreBreakoutEntry(_Section):
+    min_score: int = 8
+    position_fraction: float = 0.30
+    stop_atr: float = 0.7
+
+
+class BreakoutConfirmEntry(_Section):
+    position_fraction: float = 0.30
+    volume_min_ratio: float = 1.5
+    require_close_beyond_boundary: bool = True
+    close_beyond_boundary_atr: float = 0.05
+    stop_atr: float = 1.0
+
+
+class RetestConfirmEntry(_Section):
+    position_fraction: float = 0.40
+    retest_tolerance_atr: float = 0.25
+    max_wait_candles: int = 8
+    stop_atr: float = 1.0
+
+
+class AntiChaseEntry(_Section):
+    enabled: bool = True
+    max_rsi_long: float = 68
+    min_rsi_short: float = 32
+    max_distance_from_ema20_atr: float = 1.2
+    max_recent_3_candle_move_atr: float = 1.5
+    max_single_candle_move_atr: float = 1.0
+
+
+class EntrySection(_Section):
+    enabled_modes: EntryEnabledModes = EntryEnabledModes()
+    pre_breakout: PreBreakoutEntry = PreBreakoutEntry()
+    breakout_confirm: BreakoutConfirmEntry = BreakoutConfirmEntry()
+    retest_confirm: RetestConfirmEntry = RetestConfirmEntry()
+    anti_chase: AntiChaseEntry = AntiChaseEntry()
+
+
+class OrdersSection(_Section):
+    live_new_entry_market_order_allowed: bool = False
+    scout_order_type: str = "LIMIT"
+    breakout_order_type: str = "AGGRESSIVE_LIMIT"
+    retest_order_type: str = "LIMIT"
+    max_slippage_percent: float = 0.05
+    limit_order_ttl_sec: int = 10
+    limit_reorder_attempts: int = 1
+    aggressive_limit_time_in_force: str = "IOC"
+    use_reduce_only_for_exits: bool = True
+    partial_fill_min_ratio_to_keep: float = 0.70
+    partial_fill_below_min_action: str = "CLOSE_FILLED_QTY"
+
+
+class RiskSection(_Section):
+    account_risk_per_trade_percent: float = 1.0
+    daily_max_loss_percent: float = 5.0
+    intraday_drawdown_percent: float = 3.0
+    max_symbol_risk_percent: float = 1.0
+    max_total_open_risk_percent: float = 5.0
+    max_same_direction_positions: int = 4
+    min_leverage: int = 1
+    scout_max_leverage: int = 3
+    breakout_max_leverage: int = 5
+    retest_max_leverage: int = 6
+    high_quality_max_leverage: int = 8
+    high_atr_max_leverage: int = 3
+    isolated_margin: bool = True
+
+
+class LiquidationGuardSection(_Section):
+    min_liquidation_distance_percent: float = 2.0
+    min_liquidation_distance_atr: float = 2.0
+    block_if_liq_price_inside_stop: bool = True
+
+
+class TpSlSection(_Section):
+    initial_take_profit_r: float = 2.0
+    use_exchange_tpsl: bool = True
+    tp_trigger_by: str = "LastPrice"
+    sl_trigger_by: str = "LastPrice"
+    tpsl_mode: str = "Full"
+
+
+class PositionProtectionSection(_Section):
+    stop_mode: str = "EXCHANGE_TPSL"
+    require_tpsl_after_entry: bool = True
+    max_seconds_position_without_tpsl: int = 3
+    emergency_close_if_tpsl_missing: bool = True
+    verify_tpsl_after_entry: bool = True
+    verify_tpsl_retry_count: int = 3
+    verify_tpsl_retry_interval_sec: int = 1
+
+
+class PositionSection(_Section):
+    partial_take_profit_r: float = 2.0
+    partial_take_profit_fraction: float = 0.50
+    trailing_start_r: float = 2.0
+    trailing_atr_multiplier: float = 2.0
+    trailing_extended_after_r: float = 5.0
+    trailing_extended_atr_multiplier: float = 2.5
+    max_holding_minutes: int = 180
+
+
+class StagnationScout(_Section):
+    max_bars_without_breakout: int = 8
+
+
+class StagnationBreakout(_Section):
+    reduce_after_bars: int = 5
+    reduce_fraction: float = 0.5
+    max_bars_without_1r: int = 10
+
+
+class StagnationRetest(_Section):
+    tighten_after_bars: int = 6
+    max_bars_without_1r: int = 12
+
+
+class StagnationExitSection(_Section):
+    enabled: bool = True
+    pre_breakout_scout: StagnationScout = StagnationScout()
+    breakout_confirm: StagnationBreakout = StagnationBreakout()
+    retest_confirm: StagnationRetest = StagnationRetest()
+
+
+class CooldownSection(_Section):
+    symbol_cooldown_after_loss_min: int = 15
+    symbol_cooldown_after_2_losses_min: int = 60
+    global_cooldown_after_3_losses_min: int = 30
+    entry_mode_cooldown_after_loss_min: int = 20
+
+
+class GlobalKillSwitchSection(_Section):
+    daily_loss_percent: float = 5.0
+    intraday_drawdown_percent: float = 3.0
+    consecutive_losses: int = 4
+    order_failures_in_5min: int = 3
+    websocket_disconnects_in_10min: int = 3
+    unexpected_position_mismatch_count: int = 1
+    emergency_close_failure_count: int = 1
+    max_slippage_percent_breach_count: int = 2
+
+
+class ReconciliationSection(_Section):
+    interval_sec_when_flat: int = 10
+    interval_sec_when_position_open: int = 3
+    interval_sec_after_order_event: int = 1
+    run_on_startup: bool = True
+    run_after_ws_reconnect: bool = True
+    run_after_order_timeout: bool = True
+    source_of_truth: str = "exchange"
+
+
+class ManualInterventionSection(_Section):
+    allow_external_orders: bool = True
+    pause_new_entries_on_external_change: bool = True
+    pause_seconds_after_external_change: int = 60
+    adopt_external_positions: bool = True
+    manage_adopted_positions: bool = False
+    cancel_external_open_orders: bool = False
+
+
+class DataQualitySection(_Section):
+    max_kline_delay_sec: int = 5
+    max_ticker_delay_sec: int = 3
+    max_orderbook_delay_sec: int = 3
+    max_missing_candles: int = 1
+    block_if_candle_gap_detected: bool = True
+    max_ticker_kline_price_divergence_percent: float = 0.3
+
+
+class ClockSyncSection(_Section):
+    max_time_drift_ms: int = 500
+    sync_interval_sec: int = 60
+    block_trading_if_drift_ms_above: int = 1000
+
+
+class ApiRateLimitSection(_Section):
+    max_rest_requests_per_second: int = 5
+    max_order_requests_per_second: int = 2
+    backoff_base_sec: int = 1
+    backoff_max_sec: int = 30
+
+
+class FundingGuardSection(_Section):
+    enabled: bool = True
+    block_new_entries_before_funding_min: int = 10
+    block_if_abs_funding_rate_percent_above: float = 0.05
+    reduce_position_if_abs_funding_rate_percent_above: float = 0.10
+
+
+class SymbolStatusSection(_Section):
+    refresh_interval_sec: int = 300
+    block_if_status_not_trading: bool = True
+
+
+class AppConfig(_Section):
+    """Aggregate of every config section in ``config/quantbot.yaml``."""
+
+    bot: BotSection = BotSection()
+    exchange: ExchangeSection = ExchangeSection()
+    paper: PaperSection = PaperSection()
+    universe: UniverseSection = UniverseSection()
+    scanner: ScannerSection = ScannerSection()
+    trend_quality: TrendQualitySection = TrendQualitySection()
+    volume: VolumeSection = VolumeSection()
+    candle_quality: CandleQualitySection = CandleQualitySection()
+    entry: EntrySection = EntrySection()
+    orders: OrdersSection = OrdersSection()
+    risk: RiskSection = RiskSection()
+    liquidation_guard: LiquidationGuardSection = LiquidationGuardSection()
+    tpsl: TpSlSection = TpSlSection()
+    position_protection: PositionProtectionSection = PositionProtectionSection()
+    position: PositionSection = PositionSection()
+    stagnation_exit: StagnationExitSection = StagnationExitSection()
+    cooldown: CooldownSection = CooldownSection()
+    global_kill_switch: GlobalKillSwitchSection = GlobalKillSwitchSection()
+    reconciliation: ReconciliationSection = ReconciliationSection()
+    manual_intervention: ManualInterventionSection = ManualInterventionSection()
+    data_quality: DataQualitySection = DataQualitySection()
+    clock_sync: ClockSyncSection = ClockSyncSection()
+    api_rate_limit: ApiRateLimitSection = ApiRateLimitSection()
+    funding_guard: FundingGuardSection = FundingGuardSection()
+    symbol_status: SymbolStatusSection = SymbolStatusSection()
+
+
+class Secrets(BaseSettings):
+    """Infra credentials from environment / .env (never in YAML)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    bybit_api_key: str = ""
+    bybit_api_secret: str = ""
+    database_url: str = "postgresql+asyncpg://quantbot:quantbot@localhost:5432/quantbot"
+    redis_url: str = "redis://localhost:6379/0"
+    quantbot_config: str = "config/quantbot.yaml"
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise ConfigError(f"Config file not found: {path}")
+    with path.open("r", encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigError(f"Config root must be a mapping, got {type(data).__name__}")
+    return data
+
+
+def load_app_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
+    """Load and validate ``AppConfig`` from a YAML file.
+
+    Resolution order for ``path``: explicit arg -> ``QUANTBOT_CONFIG`` env ->
+    ``config/quantbot.yaml``.
+    """
+    resolved = Path(
+        path or os.environ.get("QUANTBOT_CONFIG", "config/quantbot.yaml")
+    )
+    raw = _read_yaml(resolved)
+    try:
+        return AppConfig.model_validate(raw)
+    except Exception as exc:  # pydantic ValidationError -> ConfigError
+        raise ConfigError(f"Invalid config in {resolved}: {exc}") from exc
+
+
+def load_secrets() -> Secrets:
+    return Secrets()

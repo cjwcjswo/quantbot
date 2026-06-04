@@ -1,0 +1,231 @@
+"""Guard gating + LIVE entry/protection through TradingService (impl doc §2.1, §5, §16)."""
+
+from decimal import Decimal
+
+from apps.bot.runtime.bot_state_machine import BotStateMachine
+from apps.bot.runtime.runtime_state import RuntimeState
+from apps.bot.workers.trading_pipeline import (
+    GuardSet,
+    LiveExecutor,
+    MarketContext,
+    PaperExecutor,
+    TradingService,
+)
+from packages.core.enums import BotMode, BotState, PositionStatus
+from packages.core.enums import EntryMode, PositionSide, PositionSource
+from packages.core.models import Position
+from packages.core.models import OrderBook, OrderBookLevel
+from packages.entry import EntryTimingEngine
+from packages.execution import OrderManager, PaperExecutionEngine
+from packages.guards import (
+    ClockSyncGuard,
+    DataQualityGuard,
+    FundingGuard,
+    PreOrderCheck,
+)
+from packages.messaging import EventBus
+from packages.position import CooldownTracker, PositionManager, PositionProtectionManager
+from packages.risk import RiskManager
+from packages.signal import SignalEngine
+from packages.strategy import StrategyRegistry, TrendFollowingStrategy
+from tests.fakes import FakeGateway
+from tests.fakes.builders import candle, symbol_meta
+from tests.fakes.builders import indicator_snapshot as snap
+
+
+def _snapshots():
+    return {
+        "15": snap(timeframe="15", close="100", ema20="99", ema50="98",
+                   slope="0.2", atr="1", atr_percent="1.5"),
+        "5": snap(timeframe="5", close="100.5", ema20="100", ema50="99",
+                  rsi="60", atr="1", atr_percent="1.5", volume_ratio="1.0"),
+        "1": snap(timeframe="1", close="101", ema20="100.5", atr="1",
+                  rsi="60", volume_ratio="2.0"),
+    }
+
+
+def _candles():
+    flats = [candle(interval="1", open_time_ms=i * 60_000, o="100", h="100.2",
+                    l="99.8", c="100") for i in range(5)]
+    return flats + [candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0")]
+
+
+def _make_service(config, *, mode, executor, guards=None, protection=None, events=None):
+    registry = StrategyRegistry()
+    registry.register(TrendFollowingStrategy(config))
+    bus = EventBus(redis=None, sink=events) if events is not None else None
+    return TradingService(
+        config, mode=mode,
+        signal_engine=SignalEngine(registry),
+        entry_engine=EntryTimingEngine(config),
+        risk_manager=RiskManager(config),
+        position_manager=PositionManager(config),
+        state=RuntimeState(),
+        executor=executor,
+        guards=guards,
+        protection_manager=protection,
+        event_bus=bus,
+    )
+
+
+def _entry_kwargs(market=None):
+    return dict(
+        symbol="BTCUSDT", snapshots=_snapshots(), candles_1m=_candles(),
+        box_high=Decimal("100"), box_low=Decimal("98"),
+        symbol_meta=symbol_meta(symbol="BTCUSDT", min_qty="0.001"),
+        equity=Decimal("10000"), entry_price=Decimal("101"),
+        best_bid=Decimal("100.98"), best_ask=Decimal("101.0"), market=market,
+    )
+
+
+async def _paper_service(config, guards=None, events=None):
+    return _make_service(
+        config, mode=BotMode.PAPER,
+        executor=PaperExecutor(PaperExecutionEngine(config)),
+        guards=guards, events=events,
+    )
+
+
+# --- guard gating ---------------------------------------------------------- #
+async def test_blocked_when_not_running(config):
+    sm = BotStateMachine(initial=BotState.STANDBY)
+    service = await _paper_service(config, guards=GuardSet(state_machine=sm))
+    assert await service.evaluate_entry(**_entry_kwargs()) is None
+
+
+async def test_blocked_by_data_quality(config):
+    guards = GuardSet(data_quality=DataQualityGuard(config.data_quality))
+    service = await _paper_service(config, guards=guards)
+    market = MarketContext(
+        now_ms=100_000, last_kline_ms=100_000 - 6000,  # stale > 5s
+        last_ticker_ms=100_000, last_orderbook_ms=100_000,
+        ticker_price=Decimal("101"), kline_close=Decimal("101"),
+    )
+    assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+
+async def test_blocked_by_funding_window(config):
+    guards = GuardSet(funding_guard=FundingGuard(config.funding_guard))
+    service = await _paper_service(config, guards=guards)
+    market = MarketContext(now_ms=0, next_funding_time_ms=5 * 60_000)
+    assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+
+async def test_blocked_by_symbol_cooldown(config):
+    cd = CooldownTracker(config.cooldown)
+    from packages.core.enums import EntryMode
+    cd.record_result("BTCUSDT", EntryMode.BREAKOUT_CONFIRM, is_win=False)
+    service = await _paper_service(config, guards=GuardSet(cooldown=cd))
+    assert await service.evaluate_entry(**_entry_kwargs()) is None
+
+
+async def test_blocked_by_pre_order_depth(config):
+    clock = ClockSyncGuard(block_trading_if_drift_ms_above=1000)
+    clock.update(server_time_ms=0, local_time_ms=0)
+    guards = GuardSet(pre_order_check=PreOrderCheck(config), clock_guard=clock)
+    service = await _paper_service(config, guards=guards)
+    thin = OrderBook(
+        symbol="BTCUSDT",
+        bids=(OrderBookLevel(price=Decimal("100.98"), size=Decimal("1")),),
+        asks=(OrderBookLevel(price=Decimal("101.0"), size=Decimal("1")),),
+    )
+    market = MarketContext(orderbook=thin, symbol_status="Trading")
+    assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+
+async def test_paper_entry_passes_with_no_guards(config):
+    service = await _paper_service(config)
+    pos = await service.evaluate_entry(**_entry_kwargs())
+    assert pos is not None
+    assert pos.status == PositionStatus.ACTIVE
+
+
+# --- LIVE entry + TP/SL protection ----------------------------------------- #
+async def _noop_sleep(_):
+    return None
+
+
+async def test_live_entry_protected_then_active(config, events):
+    config.bot.mode = BotMode.LIVE
+    gw = FakeGateway()
+    gw.fill_ratio = Decimal("1")
+    om = OrderManager(gw, config)
+    bus = EventBus(redis=None, sink=events)
+    ppm = PositionProtectionManager(gw, om, bus, config, sleep=_noop_sleep)
+    service = _make_service(
+        config, mode=BotMode.LIVE, executor=LiveExecutor(gw, om),
+        protection=ppm, events=events,
+    )
+    pos = await service.evaluate_entry(**_entry_kwargs())
+    assert pos is not None
+    assert pos.status == PositionStatus.ACTIVE
+    assert gw.leverage.get("BTCUSDT") is not None  # leverage was set before entry
+    from packages.core.events import BotEventType
+    assert BotEventType.TPSL_VERIFIED in events.types()
+
+
+async def test_live_entry_blocked_when_tpsl_fails(config, events):
+    config.bot.mode = BotMode.LIVE
+    gw = FakeGateway()
+    gw.fill_ratio = Decimal("1")
+    gw.disable_tpsl = True  # verify fails -> emergency close, not ACTIVE
+    om = OrderManager(gw, config)
+    bus = EventBus(redis=None, sink=events)
+    ppm = PositionProtectionManager(gw, om, bus, config, sleep=_noop_sleep)
+    service = _make_service(
+        config, mode=BotMode.LIVE, executor=LiveExecutor(gw, om),
+        protection=ppm, events=events,
+    )
+    pos = await service.evaluate_entry(**_entry_kwargs())
+    assert pos is None  # never became ACTIVE
+    from packages.core.events import BotEventType
+    assert BotEventType.EMERGENCY_TPSL_FAILED in events.types()
+
+
+async def test_tpsl_failure_moves_state_to_order_locked(config, events):
+    config.bot.mode = BotMode.LIVE
+    gw = FakeGateway()
+    gw.fill_ratio = Decimal("1")
+    gw.disable_tpsl = True
+    sm = BotStateMachine(initial=BotState.RUNNING)
+    om = OrderManager(gw, config)
+    bus = EventBus(redis=None, sink=events)
+    ppm = PositionProtectionManager(gw, om, bus, config, sleep=_noop_sleep)
+    service = _make_service(
+        config, mode=BotMode.LIVE, executor=LiveExecutor(gw, om),
+        protection=ppm, events=events,
+        guards=GuardSet(state_machine=sm),
+    )
+    assert await service.evaluate_entry(**_entry_kwargs()) is None
+    assert sm.state == BotState.ORDER_LOCKED
+
+
+async def test_manage_reduces_position_on_extreme_funding(config):
+    paper = PaperExecutionEngine(config)
+    service = _make_service(
+        config, mode=BotMode.PAPER, executor=PaperExecutor(paper),
+        guards=GuardSet(funding_guard=FundingGuard(config.funding_guard)),
+    )
+    paper._net["BTCUSDT"] = (Decimal("10"), Decimal("100"))
+    pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("10"),
+        avg_entry_price=Decimal("100"),
+        initial_risk_per_unit=Decimal("1"),
+        stop_loss_price=Decimal("99"),
+        take_profit_price=Decimal("102"),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM,
+    )
+    service._state.positions["BTCUSDT"] = pos
+    await service.manage(
+        symbol="BTCUSDT",
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        best_bid=Decimal("100"),
+        best_ask=Decimal("100.1"),
+        funding_rate=Decimal("0.0012"),
+    )
+    assert pos.qty == Decimal("5.0")
