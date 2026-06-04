@@ -119,6 +119,31 @@ async def test_scanner_refresh_populates_runtime_watchlist(redis):
     await rt.shutdown()
 
 
+async def test_trading_cycle_publishes_watchlist(redis):
+    import json
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    for tf in ("1", "5", "15"):
+        gw.set_kline("BTCUSDT", tf,
+                     series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
+    rt = _runtime(redis, gw)
+    await rt.startup()
+    rt.state_machine.force(BotState.RUNNING, reason="test")
+    await rt._trading_cycle()
+    raw = await redis.get(state_keys.BOT_WATCHLIST)
+    assert raw is not None
+    entries = json.loads(raw)
+    assert any(e["symbol"] == "BTCUSDT" for e in entries)
+    # flat market => no firing signal, but the symbol is still surfaced
+    btc = next(e for e in entries if e["symbol"] == "BTCUSDT")
+    assert btc["direction"] in ("NONE", "LONG", "SHORT")
+    assert "readiness" in btc
+    await rt.shutdown()
+
+
 async def test_close_position_command_closes_bot_position(redis):
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1"))

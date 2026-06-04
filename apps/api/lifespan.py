@@ -12,6 +12,7 @@ from apps.api.config import ApiSettings
 from apps.api.maintenance import MaintenanceWorker, load_retention_policy
 from apps.api.websocket import ConnectionManager, DashboardStream
 from packages.config import load_app_config, load_secrets
+from packages.observability import setup_logging
 from packages.messaging import CommandQueue, create_redis
 from packages.storage import (
     TradeLogger,
@@ -45,6 +46,10 @@ def attach_runtime(
 async def lifespan(app: FastAPI):
     st = app.state
     engine = None
+
+    # File logging is wired here (not in create_app) so the test path, which uses
+    # ASGITransport and never runs lifespan, does not write log files.
+    setup_logging("api", capture_uvicorn=True)
 
     if getattr(st, "session_factory", None) is None:
         # production path: build engine + redis from secrets

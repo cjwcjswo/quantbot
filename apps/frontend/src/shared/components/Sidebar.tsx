@@ -3,6 +3,7 @@ import { cn } from "@/shared/utils/cn";
 
 const LINKS = [
   { to: "/", label: "Dashboard", end: true },
+  { to: "/watchlist", label: "Watchlist" },
   { to: "/positions", label: "Positions" },
   { to: "/orders", label: "Orders" },
   { to: "/trades", label: "Trades" },

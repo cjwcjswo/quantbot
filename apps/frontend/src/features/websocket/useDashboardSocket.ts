@@ -14,10 +14,11 @@ function wsUrl(): string {
 // which react-query keys to refetch for each ws event (§13.4: WS is immediate,
 // REST snapshot is source of truth, so we invalidate and let queries refetch).
 const INVALIDATE: Record<WsEventType, string[]> = {
-  snapshot: ["botStatus", "positions", "pnl"],
+  snapshot: ["botStatus", "positions", "pnl", "watchlist"],
   bot_status: ["botStatus"],
   pnl_update: ["pnl"],
   position_update: ["positions", "trades"],
+  watchlist_update: ["watchlist"],
   order_update: ["orders"],
   trade_update: ["trades"],
   risk_update: ["botStatus"],

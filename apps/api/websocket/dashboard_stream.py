@@ -55,6 +55,7 @@ class DashboardStream:
         self._running = False
         self._last_pnl_sent = 0.0
         self._last_positions_raw: str | None = None
+        self._last_watchlist_raw: str | None = None
 
     async def start(self) -> None:
         self._running = True
@@ -143,6 +144,20 @@ class DashboardStream:
             return
         await self._manager.broadcast(self._wrap("position_update", data))
 
+    async def push_watchlist_if_changed(self) -> None:
+        try:
+            raw = await self._redis.get(state_keys.BOT_WATCHLIST)
+        except Exception:  # noqa: BLE001
+            return
+        if raw is None or raw == self._last_watchlist_raw:
+            return
+        self._last_watchlist_raw = raw
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        await self._manager.broadcast(self._wrap("watchlist_update", data))
+
     # ------------------------------------------------------------------ #
     async def _pubsub_loop(self) -> None:
         while self._running:
@@ -169,6 +184,7 @@ class DashboardStream:
             try:
                 await self.push_pnl_if_due()
                 await self.push_positions_if_changed()
+                await self.push_watchlist_if_changed()
             except asyncio.CancelledError:
                 break
             except Exception as exc:  # noqa: BLE001

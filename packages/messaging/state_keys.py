@@ -11,6 +11,7 @@ BOT_POSITIONS = "bot:positions"
 BOT_PNL = "bot:pnl"
 BOT_PROTECTION_STATUS = "bot:protection_status"
 BOT_RECONCILIATION_STATUS = "bot:reconciliation_status"
+BOT_WATCHLIST = "bot:watchlist"  # scanner candidates + per-symbol entry preview
 
 # Command queue (Backend -> Bot Engine) and event stream (Bot Engine -> Backend)
 COMMANDS_BOT = "commands:bot"

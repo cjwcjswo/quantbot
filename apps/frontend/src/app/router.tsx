@@ -2,6 +2,7 @@ import { createBrowserRouter } from "react-router-dom";
 import { Layout } from "@/shared/components/Layout";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { PositionsPage } from "@/pages/PositionsPage";
+import { WatchlistPage } from "@/pages/WatchlistPage";
 import { OrdersPage } from "@/pages/OrdersPage";
 import { TradesPage } from "@/pages/TradesPage";
 import { EventsPage } from "@/pages/EventsPage";
@@ -14,6 +15,7 @@ export const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { index: true, element: <DashboardPage /> },
+      { path: "watchlist", element: <WatchlistPage /> },
       { path: "positions", element: <PositionsPage /> },
       { path: "orders", element: <OrdersPage /> },
       { path: "trades", element: <TradesPage /> },

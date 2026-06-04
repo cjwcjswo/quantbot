@@ -34,7 +34,7 @@ from packages.entry.entry_timing_engine import EntryContext
 from packages.execution import PaperExecutionEngine
 from packages.position import PositionActionType, PositionManager
 from packages.risk import RiskContext, RiskDecision, RiskManager
-from packages.signal import SignalEngine
+from packages.signal import SignalEngine, build_watch_entry
 
 logger = logging.getLogger(__name__)
 
@@ -412,6 +412,33 @@ class TradingService:
                                   data={"qty": str(pos.qty), "entry": str(pos.avg_entry_price),
                                         "mode": decision.entry_mode.value}))
         return pos
+
+    def preview_watch(
+        self,
+        *,
+        symbol: str,
+        snapshots: dict[str, IndicatorSnapshot],
+        box_high: Decimal,
+        box_low: Decimal,
+        last_price: Decimal,
+    ) -> dict:
+        """Read-only entry preview for the dashboard watch list (arch §6.18).
+
+        Generates signals (a pure operation) but never runs the stateful
+        EntryTimingEngine or places an order, so it is safe to call every cycle.
+        """
+        signals = self._signals.generate(symbol, snapshots)
+        margin = Decimal(str(self.cfg.entry.breakout_confirm.close_beyond_boundary_atr))
+        return build_watch_entry(
+            symbol=symbol,
+            signal=signals[0] if signals else None,
+            snapshot_1m=snapshots["1"],
+            snapshot_15m=snapshots["15"],
+            box_high=box_high,
+            box_low=box_low,
+            last_price=last_price,
+            breakout_margin_atr=margin,
+        )
 
     async def close_position(
         self,

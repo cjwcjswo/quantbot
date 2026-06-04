@@ -1,13 +1,16 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useBotStatus } from "@/features/bot-status/hooks";
 import { usePnlSummary, usePnlDaily } from "@/features/pnl/hooks";
 import { usePositions } from "@/features/positions/hooks";
+import { useWatchlist } from "@/features/watchlist/hooks";
 import { useOrders } from "@/features/orders/hooks";
 import { useTrades } from "@/features/trades/hooks";
 import { useEvents } from "@/features/events/hooks";
 import { CommandBar } from "@/features/commands/components/CommandBar";
 import { PnlChart } from "@/features/pnl/components/PnlChart";
 import { PositionsTable } from "@/features/positions/components/PositionsTable";
+import { WatchlistTable } from "@/features/watchlist/components/WatchlistTable";
 import { OrdersTable } from "@/features/orders/components/OrdersTable";
 import { TradesTable } from "@/features/trades/components/TradesTable";
 import { EventsTable } from "@/features/events/components/EventsTable";
@@ -21,10 +24,12 @@ import { ModeBadge, StatusBadge } from "@/shared/components/Badges";
 import { formatNumber, pnlClass, statusText, timeAgo } from "@/shared/utils/format";
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const status = useBotStatus();
   const pnl = usePnlSummary();
   const daily = usePnlDaily();
   const positions = usePositions();
+  const watchlist = useWatchlist();
   const orders = useOrders();
   const trades = useTrades();
   const events = useEvents();
@@ -34,6 +39,7 @@ export function DashboardPage() {
   const s = status.data;
   const p = pnl.data;
   const openPositions = positions.data?.positions ?? [];
+  const watchEntries = watchlist.data?.watchlist ?? [];
 
   return (
     <div className="space-y-4">
@@ -87,6 +93,17 @@ export function DashboardPage() {
 
       <Panel title="Current Positions">
         <PositionsTable positions={openPositions} />
+      </Panel>
+
+      <Panel
+        title="Watchlist (entry candidates)"
+        actions={
+          <Button variant="secondary" onClick={() => navigate("/watchlist")}>
+            View all
+          </Button>
+        }
+      >
+        <WatchlistTable entries={watchEntries.slice(0, 8)} />
       </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">

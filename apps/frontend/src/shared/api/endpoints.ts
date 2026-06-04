@@ -15,6 +15,7 @@ import type {
   StrategyConfig,
   Trade,
   TradeDetail,
+  WatchlistResponse,
 } from "./types";
 
 export type ListQuery = Record<string, string | number | undefined>;
@@ -36,6 +37,7 @@ export const api = {
   sync: () => apiSend<CommandAccepted>("POST", "/bot/sync"),
 
   positions: () => apiGet<PositionsResponse>("/positions"),
+  watchlist: () => apiGet<WatchlistResponse>("/watchlist"),
   closePosition: (symbol: string, closePercent: number, reason = "manual dashboard close") =>
     apiSend<CommandAccepted>("POST", `/positions/${symbol}/close`, {
       close_percent: closePercent,

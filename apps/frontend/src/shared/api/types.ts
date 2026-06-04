@@ -81,6 +81,45 @@ export type PositionsResponse = {
   degraded?: boolean;
 };
 
+export type WatchDirection = "LONG" | "SHORT" | "NONE";
+export type WatchReadiness =
+  | "BREAKOUT"
+  | "NEAR"
+  | "SCOUT_ZONE"
+  | "WATCHING"
+  | "NO_SIGNAL";
+export type WatchTrend = "UP" | "DOWN" | "FLAT";
+
+// One scanner candidate + read-only entry preview (bot:watchlist). Numbers arrive
+// as strings (Decimal) to avoid float drift, matching the rest of the API.
+export type WatchEntry = {
+  symbol: string;
+  strategy: string | null;
+  direction: WatchDirection;
+  signal_score: string | null;
+  signal_reason: string | null;
+  readiness: WatchReadiness;
+  trend: WatchTrend;
+  last_price: string | null;
+  box_high: string | null;
+  box_low: string | null;
+  distance_to_breakout_pct: string | null;
+  distance_atr: string | null;
+  atr_percent: string | null;
+  rsi: string | null;
+  volume_ratio: string | null;
+  updated_ms: number;
+};
+
+export type WatchlistResponse = {
+  watchlist: WatchEntry[];
+  count: number;
+  mode: BotMode | null;
+  bot_state: string;
+  source: string;
+  degraded?: boolean;
+};
+
 export type OrderStatus =
   | "NEW"
   | "PARTIALLY_FILLED"

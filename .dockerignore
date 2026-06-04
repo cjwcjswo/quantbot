@@ -1,0 +1,22 @@
+# Keep the app image build context small and reproducible.
+.git
+.venv
+**/__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+logs
+.dev-run
+*.sqlite
+*.sqlite3
+*.db
+# Frontend is built by its own image (apps/frontend/Dockerfile), not the app image.
+apps/frontend/node_modules
+apps/frontend/dist
+node_modules
+# Never bake secrets into an image.
+.env
+.env.*
+!.env.example

@@ -21,6 +21,7 @@ from apps.api.routers import (
     strategy_config,
     system,
     trades,
+    watchlist,
     websocket,
 )
 
@@ -70,7 +71,7 @@ def create_app(
 
     for module in (
         health, bot, positions, orders, trades, pnl,
-        strategy_config, events, logs, system, websocket,
+        strategy_config, events, logs, system, watchlist, websocket,
     ):
         app.include_router(module.router)
 

@@ -83,3 +83,13 @@ async def test_build_snapshot(redis, session_factory):
     assert "bot_status" in snap
     assert "positions" in snap
     assert "pnl" in snap
+    assert "watchlist" in snap
+
+
+async def test_watchlist_pushed_on_change(redis):
+    mgr = RecordingManager()
+    stream = DashboardStream(redis, mgr, ApiSettings())
+    await redis.set("bot:watchlist", json.dumps([{"symbol": "BTCUSDT", "readiness": "NEAR"}]))
+    await stream.push_watchlist_if_changed()
+    await stream.push_watchlist_if_changed()  # unchanged -> no second push
+    assert sum(1 for m in mgr.messages if m["type"] == "watchlist_update") == 1

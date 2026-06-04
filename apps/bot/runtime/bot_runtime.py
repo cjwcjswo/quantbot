@@ -590,11 +590,24 @@ class BotRuntime:
         equity = await self._current_equity()
         self._last_equity = equity
 
+        watch: list[dict] = []
         for symbol in self._watch_symbols():
             try:
-                await self._process_symbol(symbol, equity)
+                preview = await self._process_symbol(symbol, equity)
             except Exception:
                 logger.exception("symbol %s processing failed", symbol)
+                continue
+            if preview is not None:
+                watch.append(preview)
+        await self._publish_watchlist(watch)
+
+    async def _publish_watchlist(self, entries: list[dict]) -> None:
+        if self._state_publisher is None:
+            return
+        try:
+            await self._state_publisher.publish_watchlist(entries)
+        except Exception:
+            logger.debug("watchlist publish failed")
 
     def _watch_symbols(self) -> list[str]:
         if self._universe is None:
@@ -639,11 +652,16 @@ class BotRuntime:
         self._watchlist = self._scanner.scan(tickers, atr_by_symbol)
         self._last_scanner_refresh = now
 
-    async def _process_symbol(self, symbol: str, equity: Decimal) -> None:
+    async def _process_symbol(self, symbol: str, equity: Decimal) -> dict | None:
+        """Manage an open position or consider a new entry.
+
+        Returns a read-only watch-list preview for symbols that are candidates
+        (no open bot position), or None for symbols already held / lacking data.
+        """
         assert self._collector is not None and self._indicators is not None
         ticker = self._collector.ticker(symbol)
         if ticker is None:
-            return
+            return None
         for tf in ("1", "5", "15"):
             await self._collector.refresh_klines(symbol, tf, limit=200)
         snapshots = {
@@ -668,7 +686,7 @@ class BotRuntime:
             )
             if actions and self._reconciler is not None:
                 self._reconciler.mark_order_event()  # exits => reconcile soon (§4.2)
-            return
+            return None
 
         # otherwise consider a new entry
         ob = await self._collector.refresh_orderbook(symbol)
@@ -687,7 +705,7 @@ class BotRuntime:
         box_low = s1.swing_low or ticker.last_price
         meta = self._universe.get(symbol) if self._universe else None
         if meta is None:
-            return
+            return None
         opened = await self._trading.evaluate_entry(
             symbol=symbol, snapshots=snapshots,
             candles_1m=self._collector.store.get_with_current(symbol, "1"),
@@ -695,8 +713,15 @@ class BotRuntime:
             equity=equity, entry_price=ticker.last_price, best_bid=bid, best_ask=ask,
             market=market,
         )
-        if opened is not None and self._reconciler is not None:
-            self._reconciler.mark_order_event()  # entry => reconcile soon (§4.2)
+        if opened is not None:
+            if self._reconciler is not None:
+                self._reconciler.mark_order_event()  # entry => reconcile soon (§4.2)
+            return None  # now a position; shown in the positions panel
+        # no entry this cycle -> publish a read-only preview for the dashboard
+        return self._trading.preview_watch(
+            symbol=symbol, snapshots=snapshots,
+            box_high=box_high, box_low=box_low, last_price=ticker.last_price,
+        )
 
     async def _current_equity(self) -> Decimal:
         if self.config.bot.mode == BotMode.LIVE:

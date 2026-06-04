@@ -25,6 +25,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Let native CLIs (docker/uv/npm) report failure via $LASTEXITCODE instead of throwing,
+# so we can handle Docker-not-ready gracefully.
+$PSNativeCommandUseErrorActionPreference = $false
 $Root     = Split-Path -Parent $PSScriptRoot          # repo root (scripts/ lives under it)
 $FrontDir = Join-Path $Root "apps\frontend"
 $Compose  = Join-Path $Root "docker-compose.yml"
@@ -44,14 +47,81 @@ if (Test-Path $PidFile) {
   }
 }
 
+# --- docker helpers ------------------------------------------------------- #
+function Test-DockerDaemon {
+  docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
+  return ($LASTEXITCODE -eq 0)
+}
+
+function Initialize-Docker {
+  param([int]$TimeoutSec = 180)
+  $cli = Get-Command docker -ErrorAction SilentlyContinue
+  if (-not $cli) {
+    Write-Warning "Docker CLI not found. Install Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    return $false
+  }
+  if (Test-DockerDaemon) { return $true }
+
+  # daemon not up yet -> try to launch Docker Desktop, then wait for it.
+  # docker.exe is at ...\Docker\Docker\resources\bin\docker.exe; the launcher is 3 levels up.
+  $derived = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $cli.Source))
+  $candidates = @(
+    (Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"),
+    (Join-Path ${env:ProgramFiles(x86)} "Docker\Docker\Docker Desktop.exe"),
+    (Join-Path $derived "Docker Desktop.exe")
+  ) | Where-Object { $_ -and (Test-Path $_) }
+  $desktop = $candidates | Select-Object -First 1
+  if ($desktop) {
+    Write-Host "[infra] Docker daemon not running; launching Docker Desktop..." -ForegroundColor Cyan
+    Start-Process -FilePath $desktop | Out-Null
+  } else {
+    Write-Warning "Docker daemon not running and 'Docker Desktop.exe' was not found."
+    Write-Warning "Start Docker Desktop manually, then re-run."
+  }
+
+  Write-Host "[infra] waiting for Docker daemon (up to $TimeoutSec s)..." -ForegroundColor Cyan
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+    if (Test-DockerDaemon) {
+      Write-Host "[infra] Docker daemon ready." -ForegroundColor Green
+      return $true
+    }
+    Start-Sleep -Seconds 3
+  }
+  Write-Warning "Docker daemon did not become ready within $TimeoutSec s."
+  return $false
+}
+
+function Wait-ComposeHealthy {
+  param([int]$TimeoutSec = 60)
+  Write-Host "[infra] waiting for postgres/redis to become healthy..." -ForegroundColor Cyan
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
+    $pg = (docker inspect -f '{{.State.Health.Status}}' quantbot-postgres 2>$null)
+    $rd = (docker inspect -f '{{.State.Health.Status}}' quantbot-redis 2>$null)
+    if ($pg -eq 'healthy' -and $rd -eq 'healthy') {
+      Write-Host "[infra] infra healthy." -ForegroundColor Green
+      return
+    }
+    Start-Sleep -Seconds 2
+  }
+  Write-Warning "Infra not fully healthy yet; services will keep retrying to connect."
+}
+
 # --- 1. infrastructure (Postgres + Redis) --------------------------------- #
 if (-not $SkipDocker) {
-  Write-Host "[infra] docker compose up -d (postgres + redis)..." -ForegroundColor Cyan
-  try {
+  if (Initialize-Docker) {
+    Write-Host "[infra] docker compose up -d (postgres + redis)..." -ForegroundColor Cyan
     docker compose -f $Compose up -d
-  } catch {
-    Write-Warning "docker compose failed: $_"
-    Write-Warning "Bot needs Redis and (optionally) Postgres. Continuing anyway."
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "docker compose up failed (exit $LASTEXITCODE). The bot needs Redis to run."
+    } else {
+      Wait-ComposeHealthy
+    }
+  } else {
+    Write-Warning "Skipping infra. The bot needs Redis (and ideally Postgres) to run."
+    Write-Warning "Options: start Docker Desktop and re-run, OR provide your own Redis/Postgres"
+    Write-Warning "         and re-run with -SkipDocker (set DATABASE_URL/REDIS_URL in .env)."
   }
 }
 

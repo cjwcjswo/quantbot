@@ -3,6 +3,7 @@ export type WsEventType =
   | "bot_status"
   | "pnl_update"
   | "position_update"
+  | "watchlist_update"
   | "order_update"
   | "trade_update"
   | "risk_update"

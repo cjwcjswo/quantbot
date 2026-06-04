@@ -81,3 +81,9 @@ class StatePublisher:
                 state_keys.BOT_RECONCILIATION_STATUS,
                 json.dumps(reconciliation_status),
             )
+
+    async def publish_watchlist(self, entries: list[dict]) -> None:
+        """Publish the scanner candidates + per-symbol entry preview (arch §6.24)."""
+        if self._redis is None:
+            return
+        await self._redis.set(state_keys.BOT_WATCHLIST, json.dumps(entries))
