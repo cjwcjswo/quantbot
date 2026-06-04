@@ -17,7 +17,10 @@ function ToastItem({ id, kind, message }: { id: number; kind: string; message: s
   }, [id, dismiss]);
   return (
     <div
-      className={cn("cursor-pointer rounded border px-3 py-2 text-sm shadow", TONES[kind])}
+      className={cn(
+        "animate-fade-in cursor-pointer rounded-xl border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur-md",
+        TONES[kind],
+      )}
       onClick={() => dismiss(id)}
     >
       {message}
@@ -28,7 +31,7 @@ function ToastItem({ id, kind, message }: { id: number; kind: string; message: s
 export function Toaster() {
   const toasts = useUiStore((s) => s.toasts);
   return (
-    <div className="fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2">
+    <div className="fixed bottom-4 right-3 z-[60] flex w-[min(20rem,calc(100vw-1.5rem))] flex-col gap-2 sm:right-4">
       {toasts.map((t) => (
         <ToastItem key={t.id} id={t.id} kind={t.kind} message={t.message} />
       ))}

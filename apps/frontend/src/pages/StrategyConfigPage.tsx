@@ -94,13 +94,13 @@ export function StrategyConfigPage() {
           value={json}
           onChange={(e) => setJson(e.target.value)}
           rows={6}
-          className="w-full rounded border border-panelBorder bg-bg p-3 font-mono text-xs text-slate-100 outline-none focus:border-sky-500"
+          className="w-full rounded border border-panelBorder bg-bg p-3 font-mono text-xs text-slate-100 outline-none focus:border-accent"
         />
         <input
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="사유"
-          className="mt-2 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-sky-500"
+          className="mt-2 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-accent"
         />
         <div className="mt-2">
           <Button variant="primary" disabled={!data || patch.isPending} onClick={submit}>

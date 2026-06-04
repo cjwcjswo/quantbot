@@ -41,7 +41,7 @@ export function ConfirmDialog({
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder={`확인하려면 ${requireText} 입력`}
-          className="mt-3 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-sky-500"
+          className="mt-3 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-accent"
         />
       )}
       <div className="mt-4 flex justify-end gap-2">

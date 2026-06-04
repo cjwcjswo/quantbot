@@ -10,9 +10,9 @@ type Props = {
 export function Drawer({ open, title, onClose, children }: Props) {
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/50" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/70 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="h-full w-full max-w-xl overflow-y-auto border-l border-panelBorder bg-panel shadow-xl"
+        className="h-full w-full max-w-xl animate-fade-in overflow-y-auto rounded-l-2xl border-l border-panelBorder/80 bg-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="sticky top-0 flex items-center justify-between border-b border-panelBorder bg-panel px-4 py-3">

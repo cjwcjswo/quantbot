@@ -129,7 +129,7 @@ export function DailyLogModal({
                 key={t}
                 onClick={() => setTab(t)}
                 className={`rounded px-3 py-1 text-sm ${
-                  tab === t ? "bg-sky-600/20 text-sky-300" : "text-slate-400 hover:text-slate-200"
+                  tab === t ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
                 {TAB_LABELS[t]}
@@ -182,7 +182,7 @@ export function DailyLogModal({
                 <button
                   onClick={() => setSeverity("")}
                   className={`rounded px-3 py-1 text-sm ${
-                    severity === "" ? "bg-sky-600/20 text-sky-300" : "text-slate-400 hover:text-slate-200"
+                    severity === "" ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
                   전체
@@ -192,7 +192,7 @@ export function DailyLogModal({
                     key={s}
                     onClick={() => setSeverity(s)}
                     className={`rounded px-3 py-1 text-sm ${
-                      severity === s ? "bg-sky-600/20 text-sky-300" : "text-slate-400 hover:text-slate-200"
+                      severity === s ? "bg-accent/15 text-accent" : "text-slate-400 hover:text-slate-200"
                     }`}
                   >
                     {s}

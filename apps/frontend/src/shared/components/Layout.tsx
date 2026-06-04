@@ -11,9 +11,15 @@ import { Toaster } from "./Toaster";
 function AlertBar({ tone, children }: { tone: "red" | "amber"; children: React.ReactNode }) {
   const cls =
     tone === "red"
-      ? "bg-red-600/90 text-white"
-      : "bg-amber-500/90 text-slate-900";
-  return <div className={`px-4 py-1.5 text-center text-sm font-semibold ${cls}`}>{children}</div>;
+      ? "bg-gradient-to-r from-rose-600/25 via-rose-500/15 to-rose-600/25 text-rose-200 border-rose-500/30"
+      : "bg-gradient-to-r from-amber-500/20 via-amber-400/10 to-amber-500/20 text-amber-200 border-amber-500/30";
+  return (
+    <div
+      className={`border-b px-4 py-1.5 text-center text-xs font-semibold tracking-wide backdrop-blur-sm ${cls}`}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function Layout() {
@@ -44,8 +50,10 @@ export function Layout() {
       )}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar open={sidebarOpen} />
-        <main className="flex-1 overflow-y-auto p-4">
-          <Outlet />
+        <main className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+          <div className="mx-auto w-full max-w-[1700px] animate-fade-in">
+            <Outlet />
+          </div>
         </main>
       </div>
       <Toaster />

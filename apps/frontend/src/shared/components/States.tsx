@@ -3,7 +3,7 @@ import { Button } from "./Button";
 export function LoadingState({ label = "불러오는 중…" }: { label?: string }) {
   return (
     <div className="flex items-center gap-2 py-8 text-sm text-slate-400">
-      <span className="h-3 w-3 animate-pulse rounded-full bg-sky-500" />
+      <span className="h-2.5 w-2.5 animate-pulse-dot rounded-full bg-accent" />
       {label}
     </div>
   );

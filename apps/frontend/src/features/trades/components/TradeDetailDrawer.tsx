@@ -33,14 +33,14 @@ function Timeline({ events }: { events: TimelineEvent[] }) {
     <ol className="space-y-2">
       {events.map((e, i) => (
         <li key={i} className="flex items-start gap-2 text-sm">
-          <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-sky-500" />
+          <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-accent" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <span className="font-medium text-slate-200">{e.type}</span>
               {e.severity && <SeverityBadge severity={e.severity} />}
               {e.data && Object.keys(e.data).length > 0 && (
                 <button
-                  className="text-xs text-sky-400 hover:underline"
+                  className="text-xs text-accent hover:underline"
                   onClick={() => setExpanded(expanded === i ? null : i)}
                 >
                   상세

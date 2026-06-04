@@ -12,11 +12,11 @@ export function Modal({ open, title, onClose, children, wide }: Props) {
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-6"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-4 backdrop-blur-sm sm:p-6"
       onClick={onClose}
     >
       <div
-        className={`mt-10 w-full ${wide ? "max-w-5xl" : "max-w-lg"} rounded-lg border border-panelBorder bg-panel shadow-xl`}
+        className={`mt-6 w-full sm:mt-12 ${wide ? "max-w-5xl" : "max-w-lg"} animate-fade-in rounded-xl border border-panelBorder/80 bg-panel shadow-2xl`}
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-panelBorder px-4 py-3">

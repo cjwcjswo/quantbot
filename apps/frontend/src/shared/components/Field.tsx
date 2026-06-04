@@ -18,7 +18,7 @@ export function TextInput({
         value={value}
         placeholder={placeholder}
         onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-        className="w-36 rounded border border-panelBorder bg-bg px-2 py-1 text-sm text-slate-100 outline-none focus:border-sky-500"
+        className="w-36 rounded border border-panelBorder bg-bg px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent"
       />
     </label>
   );
@@ -41,7 +41,7 @@ export function SelectInput({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-36 rounded border border-panelBorder bg-bg px-2 py-1 text-sm text-slate-100 outline-none focus:border-sky-500"
+        className="w-36 rounded border border-panelBorder bg-bg px-2 py-1 text-sm text-slate-100 outline-none focus:border-accent"
       >
         <option value="">전체</option>
         {options.map((o) => (

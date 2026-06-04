@@ -36,7 +36,7 @@ export function EventsTable({ events }: { events: BotEvent[] }) {
       render: (e) =>
         Object.keys(e.data ?? {}).length > 0 ? (
           <button
-            className="text-xs text-sky-400 hover:underline"
+            className="text-xs text-accent hover:underline"
             onClick={() => setExpanded(expanded === e.id ? null : e.id)}
           >
             {expanded === e.id ? "숨기기" : "보기"}
