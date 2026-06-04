@@ -33,45 +33,45 @@ export function CommandBar() {
         disabled={!canStart || cmd.isPending}
         onClick={() => cmd.mutate({ kind: "start", mode: "PAPER", liveConfirm: false })}
       >
-        START PAPER
+        PAPER 시작
       </Button>
       <Button
         variant="danger"
         disabled={!canStart || cmd.isPending}
         onClick={() => setDialog("startLive")}
       >
-        START LIVE
+        LIVE 시작
       </Button>
       <Button variant="danger-outline" disabled={cmd.isPending} onClick={() => setDialog("stop")}>
-        STOP
+        정지
       </Button>
       <Button
         variant="warning"
         disabled={!isRunning || cmd.isPending}
         onClick={() => cmd.mutate({ kind: "pause" })}
       >
-        PAUSE
+        일시정지
       </Button>
       <Button
         variant="primary"
         disabled={!isPaused || locked || cmd.isPending}
         onClick={() => cmd.mutate({ kind: "resume" })}
       >
-        RESUME
+        재개
       </Button>
       <Button
         variant="secondary"
         disabled={disconnected || cmd.isPending}
         onClick={() => cmd.mutate({ kind: "sync" })}
       >
-        SYNC NOW
+        지금 동기화
       </Button>
 
       <ConfirmDialog
         open={dialog === "startLive"}
-        title="Start in LIVE mode"
+        title="LIVE 모드 시작"
         message="LIVE 모드로 실제 주문이 실행됩니다. 계속하려면 LIVE를 입력하세요."
-        confirmLabel="Start LIVE"
+        confirmLabel="LIVE 시작"
         danger
         requireText="LIVE"
         onCancel={() => setDialog("none")}
@@ -81,15 +81,15 @@ export function CommandBar() {
         }}
       />
 
-      <Modal open={dialog === "stop"} title="Stop bot" onClose={closeStopDialog}>
-        <p className="text-sm text-slate-300">The bot will stop accepting new entries.</p>
+      <Modal open={dialog === "stop"} title="봇 정지" onClose={closeStopDialog}>
+        <p className="text-sm text-slate-300">봇이 신규 진입을 중단합니다.</p>
         <label className="mt-3 flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={cancelOrders}
             onChange={(e) => setCancelOrders(e.target.checked)}
           />
-          Cancel open orders
+          미체결 주문 취소
         </label>
         <label className="mt-2 flex items-center gap-2 text-sm">
           <input
@@ -100,23 +100,23 @@ export function CommandBar() {
               setStopConfirmText("");
             }}
           />
-          Close all positions
+          전체 포지션 청산
         </label>
         {closePositions && (
           <div className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-3 py-2">
-            <p className="text-sm text-red-300">This will request closing ALL open positions.</p>
+            <p className="text-sm text-red-300">보유한 모든 포지션의 청산을 요청합니다.</p>
             <input
               autoFocus
               value={stopConfirmText}
               onChange={(e) => setStopConfirmText(e.target.value)}
-              placeholder="Type CLOSE to confirm"
+              placeholder="확인하려면 CLOSE 입력"
               className="mt-2 w-full rounded border border-red-500/40 bg-bg px-3 py-2 text-sm outline-none focus:border-red-400"
             />
           </div>
         )}
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={closeStopDialog}>
-            Cancel
+            취소
           </Button>
           <Button
             variant="danger"
@@ -130,7 +130,7 @@ export function CommandBar() {
               closeStopDialog();
             }}
           >
-            Stop
+            정지
           </Button>
         </div>
       </Modal>

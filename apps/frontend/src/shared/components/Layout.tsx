@@ -31,16 +31,16 @@ export function Layout() {
     <div className="flex h-full flex-col">
       <Header />
       {status?.mode === "LIVE" && (
-        <AlertBar tone="red">LIVE MODE — Real orders are enabled</AlertBar>
+        <AlertBar tone="red">LIVE 모드 — 실제 주문이 활성화되어 있습니다</AlertBar>
       )}
       {status?.state === "EMERGENCY_STOP" && (
-        <AlertBar tone="red">EMERGENCY STOP — trading halted</AlertBar>
+        <AlertBar tone="red">비상 정지 — 매매가 중단되었습니다</AlertBar>
       )}
       {tpslFailed && (
-        <AlertBar tone="red">TP/SL protection FAILED on a LIVE position — check Positions</AlertBar>
+        <AlertBar tone="red">LIVE 포지션의 TP/SL 보호 실패 — 포지션 탭을 확인하세요</AlertBar>
       )}
       {!connected && (
-        <AlertBar tone="amber">DISCONNECTED — reconnecting to live updates…</AlertBar>
+        <AlertBar tone="amber">연결 끊김 — 실시간 업데이트에 재연결 중…</AlertBar>
       )}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar open={sidebarOpen} />

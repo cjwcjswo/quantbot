@@ -24,7 +24,7 @@ export function Modal({ open, title, onClose, children, wide }: Props) {
           <button
             className="text-slate-400 hover:text-slate-200"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="닫기"
           >
             ✕
           </button>

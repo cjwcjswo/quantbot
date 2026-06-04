@@ -21,13 +21,13 @@ export function usePatchConfig() {
       reason: string;
     }) => api.patchConfig(version, patch, reason),
     onSuccess: (res) => {
-      pushToast("success", `Config v${res.config_version} requested (RELOAD_CONFIG)`);
+      pushToast("success", `설정 v${res.config_version} 변경 요청됨 (RELOAD_CONFIG)`);
       qc.invalidateQueries({ queryKey: ["strategyConfig"] });
     },
     onError: (e) =>
       pushToast(
         "error",
-        e instanceof ApiClientError ? `${e.code}: ${e.message}` : "Config update failed",
+        e instanceof ApiClientError ? `${e.code}: ${e.message}` : "설정 변경 실패",
       ),
   });
 }

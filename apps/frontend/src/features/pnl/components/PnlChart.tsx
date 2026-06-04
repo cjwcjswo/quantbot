@@ -11,7 +11,7 @@ import type { DailyPnl } from "@/shared/api/types";
 import { EmptyState } from "@/shared/components/States";
 
 export function PnlChart({ daily }: { daily: DailyPnl[] }) {
-  if (daily.length === 0) return <EmptyState label="No daily PnL yet." />;
+  if (daily.length === 0) return <EmptyState label="아직 일일 손익 데이터가 없습니다." />;
   const data = [...daily]
     .sort((a, b) => a.day.localeCompare(b.day))
     .map((d) => ({ day: d.day, net: Number(d.net) }));

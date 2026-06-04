@@ -1,6 +1,6 @@
 import { Button } from "./Button";
 
-export function LoadingState({ label = "Loading…" }: { label?: string }) {
+export function LoadingState({ label = "불러오는 중…" }: { label?: string }) {
   return (
     <div className="flex items-center gap-2 py-8 text-sm text-slate-400">
       <span className="h-3 w-3 animate-pulse rounded-full bg-sky-500" />
@@ -19,7 +19,7 @@ export function LoadingSkeleton({ rows = 4 }: { rows?: number }) {
   );
 }
 
-export function EmptyState({ label = "No data." }: { label?: string }) {
+export function EmptyState({ label = "데이터 없음" }: { label?: string }) {
   return <div className="py-8 text-center text-sm text-slate-500">{label}</div>;
 }
 
@@ -35,7 +35,7 @@ export function ErrorState({
       <span>{message}</span>
       {onRetry && (
         <Button variant="secondary" onClick={onRetry}>
-          Retry
+          다시 시도
         </Button>
       )}
     </div>

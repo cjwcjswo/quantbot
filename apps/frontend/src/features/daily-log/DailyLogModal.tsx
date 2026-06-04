@@ -12,6 +12,15 @@ import { pnlClass } from "@/shared/utils/format";
 
 const TABS = ["Summary", "Trades", "Events", "Manual", "Risk", "Protection", "Raw"] as const;
 type Tab = (typeof TABS)[number];
+const TAB_LABELS: Record<Tab, string> = {
+  Summary: "요약",
+  Trades: "체결",
+  Events: "이벤트",
+  Manual: "수동개입",
+  Risk: "리스크",
+  Protection: "보호",
+  Raw: "원본",
+};
 const SEVERITIES: Severity[] = ["INFO", "WARNING", "ERROR", "CRITICAL"];
 type SummaryRow = { key: string; trades: number; net: number };
 
@@ -33,7 +42,7 @@ function summarizeTrades(trades: Trade[], field: "symbol" | "strategy_id" | "ent
 }
 
 function JsonList({ rows }: { rows: Record<string, unknown>[] }) {
-  if (rows.length === 0) return <p className="text-sm text-slate-500">None.</p>;
+  if (rows.length === 0) return <p className="text-sm text-slate-500">없음</p>;
   return (
     <pre className="max-h-80 overflow-auto rounded border border-panelBorder bg-bg p-3 text-xs text-slate-300">
       {JSON.stringify(rows, null, 2)}
@@ -50,9 +59,9 @@ function SummaryTable({ title, rows }: { title: string; rows: SummaryRow[] }) {
         <table className="w-full text-sm">
           <thead className="border-b border-panelBorder text-xs uppercase text-slate-500">
             <tr>
-              <th className="px-2 py-1 text-left">Key</th>
-              <th className="px-2 py-1 text-right">Trades</th>
-              <th className="px-2 py-1 text-right">Net PnL</th>
+              <th className="px-2 py-1 text-left">항목</th>
+              <th className="px-2 py-1 text-right">체결</th>
+              <th className="px-2 py-1 text-right">순손익</th>
             </tr>
           </thead>
           <tbody>
@@ -101,14 +110,14 @@ export function DailyLogModal({
   return (
     <Modal
       open={date !== null}
-      title={`Daily Log — ${date ?? ""} / ${mode ?? "ALL"}`}
+      title={`일일 로그 — ${date ?? ""} / ${mode ?? "전체"}`}
       onClose={onClose}
       wide
     >
       {isLoading && <LoadingSkeleton rows={6} />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load daily log"}
+          message={error instanceof ApiClientError ? error.message : "일일 로그를 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}
@@ -123,7 +132,7 @@ export function DailyLogModal({
                   tab === t ? "bg-sky-600/20 text-sky-300" : "text-slate-400 hover:text-slate-200"
                 }`}
               >
-                {t}
+                {TAB_LABELS[t]}
               </button>
             ))}
           </div>
@@ -131,10 +140,10 @@ export function DailyLogModal({
           {tab === "Summary" && (
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <MetricCard label="Trades" value={data.summary.trade_count} />
-                <MetricCard label="Win / Loss" value={`${data.summary.win_count} / ${data.summary.loss_count}`} />
+                <MetricCard label="체결 수" value={data.summary.trade_count} />
+                <MetricCard label="승 / 패" value={`${data.summary.win_count} / ${data.summary.loss_count}`} />
                 <MetricCard
-                  label="Win Rate"
+                  label="승률"
                   value={
                     data.summary.trade_count === 0
                       ? "-"
@@ -142,22 +151,22 @@ export function DailyLogModal({
                   }
                 />
                 <MetricCard
-                  label="Net PnL"
+                  label="순손익"
                   value={data.summary.net_pnl}
                   valueClassName={pnlClass(data.summary.net_pnl)}
                 />
-                <MetricCard label="Realized" value={data.summary.realized_pnl} />
-                <MetricCard label="Unrealized" value={data.summary.unrealized_pnl} />
-                <MetricCard label="Fees" value={data.summary.fees} />
-                <MetricCard label="Max Drawdown" value={data.summary.max_drawdown} />
-                <MetricCard label="Manual Interv." value={data.summary.manual_intervention_count} />
-                <MetricCard label="TP/SL Failed" value={data.summary.tpsl_failed_count} />
-                <MetricCard label="Emergency" value={data.summary.emergency_count} />
+                <MetricCard label="실현손익" value={data.summary.realized_pnl} />
+                <MetricCard label="미실현손익" value={data.summary.unrealized_pnl} />
+                <MetricCard label="수수료" value={data.summary.fees} />
+                <MetricCard label="최대 낙폭" value={data.summary.max_drawdown} />
+                <MetricCard label="수동개입" value={data.summary.manual_intervention_count} />
+                <MetricCard label="TP/SL 실패" value={data.summary.tpsl_failed_count} />
+                <MetricCard label="비상" value={data.summary.emergency_count} />
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                <SummaryTable title="Strategy PnL" rows={summaryRows.byStrategy} />
-                <SummaryTable title="Symbol PnL" rows={summaryRows.bySymbol} />
-                <SummaryTable title="Entry Mode PnL" rows={summaryRows.byEntryMode} />
+                <SummaryTable title="전략별 손익" rows={summaryRows.byStrategy} />
+                <SummaryTable title="종목별 손익" rows={summaryRows.bySymbol} />
+                <SummaryTable title="진입모드별 손익" rows={summaryRows.byEntryMode} />
               </div>
             </div>
           )}
@@ -176,7 +185,7 @@ export function DailyLogModal({
                     severity === "" ? "bg-sky-600/20 text-sky-300" : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  All
+                  전체
                 </button>
                 {SEVERITIES.map((s) => (
                   <button

@@ -30,10 +30,10 @@ export function useCommand() {
       }
     },
     onSuccess: (res) => {
-      pushToast("success", `Command accepted: ${res.command_id.slice(0, 8)} (${res.status})`);
+      pushToast("success", `명령 접수됨: ${res.command_id.slice(0, 8)} (${res.status})`);
       qc.invalidateQueries({ queryKey: ["botStatus"] });
     },
     onError: (e) =>
-      pushToast("error", e instanceof ApiClientError ? e.message : "Command failed"),
+      pushToast("error", e instanceof ApiClientError ? e.message : "명령 실패"),
   });
 }

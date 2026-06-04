@@ -14,10 +14,10 @@ export function useClosePosition() {
     mutationFn: ({ symbol, percent }: { symbol: string; percent: number }) =>
       api.closePosition(symbol, percent),
     onSuccess: (res) => {
-      pushToast("success", `Close requested (command ${res.command_id.slice(0, 8)})`);
+      pushToast("success", `청산 요청됨 (명령 ${res.command_id.slice(0, 8)})`);
       qc.invalidateQueries({ queryKey: ["positions"] });
     },
     onError: (e) =>
-      pushToast("error", e instanceof ApiClientError ? e.message : "Close failed"),
+      pushToast("error", e instanceof ApiClientError ? e.message : "청산 실패"),
   });
 }

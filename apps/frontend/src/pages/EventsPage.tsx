@@ -21,17 +21,17 @@ export function EventsPage() {
   });
 
   return (
-    <Panel title="Events">
+    <Panel title="이벤트">
       <div className="mb-3 flex flex-wrap gap-3">
-        <TextInput label="Symbol" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
+        <TextInput label="종목" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
         <TextInput
-          label="Event Type"
+          label="이벤트 유형"
           value={eventType}
           onChange={setEventType}
           placeholder="TPSL_SET"
         />
         <SelectInput
-          label="Severity"
+          label="심각도"
           value={severity}
           onChange={setSeverity}
           options={SEVERITIES}
@@ -41,7 +41,7 @@ export function EventsPage() {
       {isLoading && <LoadingState />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load events"}
+          message={error instanceof ApiClientError ? error.message : "이벤트를 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}

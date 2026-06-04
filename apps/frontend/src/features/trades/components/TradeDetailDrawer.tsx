@@ -10,11 +10,11 @@ import { formatDateTime, formatNumber, formatPrice, pnlClass } from "@/shared/ut
 import type { Fill, TimelineEvent } from "@/shared/api/types";
 
 const FILL_COLUMNS: Column<Fill>[] = [
-  { key: "side", header: "Side", render: (f) => f.side },
-  { key: "price", header: "Price", align: "right", render: (f) => formatPrice(f.price) },
-  { key: "qty", header: "Qty", align: "right", render: (f) => formatNumber(f.qty, 4) },
-  { key: "fee", header: "Fee", align: "right", render: (f) => formatNumber(f.fee, 4) },
-  { key: "slippage", header: "Slippage", align: "right", render: (f) => f.slippage ?? "-" },
+  { key: "side", header: "방향", render: (f) => f.side },
+  { key: "price", header: "가격", align: "right", render: (f) => formatPrice(f.price) },
+  { key: "qty", header: "수량", align: "right", render: (f) => formatNumber(f.qty, 4) },
+  { key: "fee", header: "수수료", align: "right", render: (f) => formatNumber(f.fee, 4) },
+  { key: "slippage", header: "슬리피지", align: "right", render: (f) => f.slippage ?? "-" },
 ];
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -28,7 +28,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 
 function Timeline({ events }: { events: TimelineEvent[] }) {
   const [expanded, setExpanded] = useState<number | null>(null);
-  if (events.length === 0) return <p className="text-sm text-slate-500">No timeline events.</p>;
+  if (events.length === 0) return <p className="text-sm text-slate-500">타임라인 이벤트 없음</p>;
   return (
     <ol className="space-y-2">
       {events.map((e, i) => (
@@ -43,7 +43,7 @@ function Timeline({ events }: { events: TimelineEvent[] }) {
                   className="text-xs text-sky-400 hover:underline"
                   onClick={() => setExpanded(expanded === i ? null : i)}
                 >
-                  details
+                  상세
                 </button>
               )}
             </div>
@@ -72,73 +72,73 @@ export function TradeDetailDrawer({
   const { data, isLoading, error, refetch } = useTradeDetail(tradeId);
 
   return (
-    <Drawer open={tradeId !== null} title={`Trade ${tradeId ?? ""}`} onClose={onClose}>
+    <Drawer open={tradeId !== null} title={`체결 ${tradeId ?? ""}`} onClose={onClose}>
       {isLoading && <LoadingSkeleton />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load trade"}
+          message={error instanceof ApiClientError ? error.message : "체결 정보를 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}
       {data && (
         <div className="space-y-5">
           <section>
-            <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">Trade</h3>
-            <Field label="Symbol" value={data.trade.symbol} />
-            <Field label="Side" value={data.trade.side} />
-            <Field label="Strategy" value={data.trade.strategy_id ?? "-"} />
-            <Field label="Entry Mode" value={data.trade.entry_mode ?? "-"} />
-            <Field label="Mode" value={data.trade.mode ?? "-"} />
-            <Field label="Entry" value={formatPrice(data.trade.entry_price)} />
-            <Field label="Exit" value={formatPrice(data.trade.exit_price)} />
-            <Field label="Qty" value={formatNumber(data.trade.qty, 4)} />
-            <Field label="Leverage" value={data.trade.leverage ?? "-"} />
-            <Field label="Fees" value={formatNumber(data.trade.fees)} />
+            <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">체결</h3>
+            <Field label="종목" value={data.trade.symbol} />
+            <Field label="방향" value={data.trade.side} />
+            <Field label="전략" value={data.trade.strategy_id ?? "-"} />
+            <Field label="진입 모드" value={data.trade.entry_mode ?? "-"} />
+            <Field label="모드" value={data.trade.mode ?? "-"} />
+            <Field label="진입가" value={formatPrice(data.trade.entry_price)} />
+            <Field label="청산가" value={formatPrice(data.trade.exit_price)} />
+            <Field label="수량" value={formatNumber(data.trade.qty, 4)} />
+            <Field label="레버리지" value={data.trade.leverage ?? "-"} />
+            <Field label="수수료" value={formatNumber(data.trade.fees)} />
             <Field
-              label="Net PnL"
+              label="순손익"
               value={
                 <span className={pnlClass(data.trade.net_pnl ?? data.trade.realized_pnl)}>
                   {formatNumber(data.trade.net_pnl ?? data.trade.realized_pnl)}
                 </span>
               }
             />
-            <Field label="R Multiple" value={formatNumber(data.trade.r_multiple, 2)} />
-            <Field label="Exit Reason" value={data.trade.exit_reason ?? "-"} />
-            <Field label="Opened" value={formatDateTime(data.trade.opened_at)} />
-            <Field label="Closed" value={formatDateTime(data.trade.closed_at)} />
+            <Field label="R 배수" value={formatNumber(data.trade.r_multiple, 2)} />
+            <Field label="청산 사유" value={data.trade.exit_reason ?? "-"} />
+            <Field label="진입 시각" value={formatDateTime(data.trade.opened_at)} />
+            <Field label="청산 시각" value={formatDateTime(data.trade.closed_at)} />
           </section>
 
           <section>
-            <h3 className="mb-2 text-xs uppercase tracking-wide text-slate-500">Timeline</h3>
+            <h3 className="mb-2 text-xs uppercase tracking-wide text-slate-500">타임라인</h3>
             <Timeline events={data.timeline} />
           </section>
 
           <section>
             <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">
-              Orders ({data.orders.length})
+              주문 ({data.orders.length})
             </h3>
             <OrdersTable orders={data.orders} />
           </section>
 
           <section>
             <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">
-              Fills ({data.fills.length})
+              체결 ({data.fills.length})
             </h3>
             <DataTable
               columns={FILL_COLUMNS}
               rows={data.fills}
               rowKey={(f) => f.id}
-              empty="No fills."
+              empty="체결 없음"
             />
             <p className="mt-1 text-xs text-slate-500">
-              {data.protection_events.length} protection events ·{" "}
-              {data.manual_interventions.length} manual interventions ·{" "}
-              {data.risk_events.length} risk events.
+              보호 이벤트 {data.protection_events.length} ·{" "}
+              수동개입 {data.manual_interventions.length} ·{" "}
+              리스크 이벤트 {data.risk_events.length}
             </p>
           </section>
 
           <section>
-            <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">Raw</h3>
+            <h3 className="mb-1 text-xs uppercase tracking-wide text-slate-500">원본</h3>
             <pre className="max-h-60 overflow-auto rounded border border-panelBorder bg-bg p-3 text-xs text-slate-400">
               {JSON.stringify(data.trade, null, 2)}
             </pre>

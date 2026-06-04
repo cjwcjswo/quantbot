@@ -26,44 +26,44 @@ export function OrdersTable({
   onCancel?: (order: Order) => void;
 }) {
   const columns: Column<Order>[] = [
-    { key: "order_id", header: "Order ID", render: (o) => o.order_id ?? `#${o.id}` },
-    { key: "symbol", header: "Symbol", render: (o) => o.symbol },
-    { key: "side", header: "Side", render: (o) => o.side },
-    { key: "type", header: "Type", render: (o) => o.order_type },
+    { key: "order_id", header: "주문 ID", render: (o) => o.order_id ?? `#${o.id}` },
+    { key: "symbol", header: "종목", render: (o) => o.symbol },
+    { key: "side", header: "방향", render: (o) => o.side },
+    { key: "type", header: "유형", render: (o) => o.order_type },
     {
       key: "status",
-      header: "Status",
+      header: "상태",
       render: (o) => <TextBadge text={o.status} tone={STATUS_TONE[o.status] ?? "slate"} />,
     },
-    { key: "source", header: "Source", render: (o) => o.source ?? "-" },
-    { key: "mode", header: "Mode", render: (o) => o.mode ?? "-" },
-    { key: "qty", header: "Qty", align: "right", render: (o) => formatNumber(o.qty, 4) },
+    { key: "source", header: "출처", render: (o) => o.source ?? "-" },
+    { key: "mode", header: "모드", render: (o) => o.mode ?? "-" },
+    { key: "qty", header: "수량", align: "right", render: (o) => formatNumber(o.qty, 4) },
     {
       key: "filled",
-      header: "Filled",
+      header: "체결량",
       align: "right",
       render: (o) => formatNumber(o.filled_qty, 4),
     },
-    { key: "price", header: "Price", align: "right", render: (o) => formatPrice(o.price) },
+    { key: "price", header: "가격", align: "right", render: (o) => formatPrice(o.price) },
     {
       key: "avg",
-      header: "Avg Fill",
+      header: "평균 체결가",
       align: "right",
       render: (o) => formatPrice(o.avg_fill_price),
     },
-    { key: "reduce", header: "Reduce", render: (o) => (o.reduce_only ? "yes" : "-") },
-    { key: "created", header: "Created", render: (o) => formatDateTime(o.created_at) },
-    { key: "updated", header: "Updated", render: (o) => formatDateTime(o.updated_at) },
+    { key: "reduce", header: "리듀스", render: (o) => (o.reduce_only ? "예" : "-") },
+    { key: "created", header: "생성", render: (o) => formatDateTime(o.created_at) },
+    { key: "updated", header: "수정", render: (o) => formatDateTime(o.updated_at) },
   ];
 
   if (onCancel) {
     columns.push({
       key: "actions",
-      header: "Actions",
+      header: "작업",
       render: (o) =>
         CANCELABLE.has(o.status) && o.order_id ? (
           <Button variant="danger-outline" onClick={() => onCancel(o)}>
-            Cancel
+            취소
           </Button>
         ) : (
           <span className="text-slate-600">—</span>
@@ -71,5 +71,5 @@ export function OrdersTable({
     });
   }
 
-  return <DataTable columns={columns} rows={orders} rowKey={(o) => o.id} empty="No orders." />;
+  return <DataTable columns={columns} rows={orders} rowKey={(o) => o.id} empty="주문 없음" />;
 }

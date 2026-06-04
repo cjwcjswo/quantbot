@@ -18,7 +18,7 @@ export function ConfirmDialog({
   open,
   title,
   message,
-  confirmLabel = "Confirm",
+  confirmLabel = "확인",
   danger,
   requireText,
   onConfirm,
@@ -40,13 +40,13 @@ export function ConfirmDialog({
           autoFocus
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder={`Type ${requireText} to confirm`}
+          placeholder={`확인하려면 ${requireText} 입력`}
           className="mt-3 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-sky-500"
         />
       )}
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>
-          Cancel
+          취소
         </Button>
         <Button
           variant={danger ? "danger" : "primary"}

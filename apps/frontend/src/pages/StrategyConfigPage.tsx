@@ -47,7 +47,7 @@ export function StrategyConfigPage() {
     try {
       parsed = JSON.parse(json) as Record<string, unknown>;
     } catch {
-      pushToast("error", "Patch is not valid JSON");
+      pushToast("error", "패치가 올바른 JSON 형식이 아닙니다");
       return;
     }
     const risky = Object.keys(parsed).some((k) => RISKY.includes(k));
@@ -60,19 +60,19 @@ export function StrategyConfigPage() {
 
   return (
     <div className="space-y-4">
-      <Panel title="Strategy Config">
+      <Panel title="전략 설정">
         {isLoading && <LoadingState />}
         {error && (
           <ErrorState
-            message={error instanceof ApiClientError ? error.message : "Failed to load config"}
+            message={error instanceof ApiClientError ? error.message : "설정을 불러오지 못했습니다"}
             onRetry={() => refetch()}
           />
         )}
         {data && (
           <div className="space-y-3">
             <div className="text-sm text-slate-400">
-              Version <span className="text-slate-200">{data.config_version}</span> · Mode{" "}
-              <span className="text-slate-200">{data.mode ?? "—"}</span> · Strategies{" "}
+              버전 <span className="text-slate-200">{data.config_version}</span> · 모드{" "}
+              <span className="text-slate-200">{data.mode ?? "—"}</span> · 전략{" "}
               <span className="text-slate-200">
                 {data.strategy.active_strategies.join(", ")}
               </span>
@@ -89,7 +89,7 @@ export function StrategyConfigPage() {
         )}
       </Panel>
 
-      <Panel title="Request config change">
+      <Panel title="설정 변경 요청">
         <textarea
           value={json}
           onChange={(e) => setJson(e.target.value)}
@@ -99,21 +99,21 @@ export function StrategyConfigPage() {
         <input
           value={reason}
           onChange={(e) => setReason(e.target.value)}
-          placeholder="reason"
+          placeholder="사유"
           className="mt-2 w-full rounded border border-panelBorder bg-bg px-3 py-2 text-sm outline-none focus:border-sky-500"
         />
         <div className="mt-2">
           <Button variant="primary" disabled={!data || patch.isPending} onClick={submit}>
-            Apply change
+            변경 적용
           </Button>
         </div>
       </Panel>
 
       <ConfirmDialog
         open={confirmRisky !== null}
-        title="Risky config change"
-        message="This patch changes risk-related settings. Continue?"
-        confirmLabel="Apply"
+        title="위험 설정 변경"
+        message="리스크 관련 설정을 변경합니다. 계속할까요?"
+        confirmLabel="적용"
         danger
         requireText="APPLY"
         onCancel={() => setConfirmRisky(null)}

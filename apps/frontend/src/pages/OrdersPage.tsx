@@ -28,18 +28,18 @@ export function OrdersPage() {
   const cancel = useCancelOrder();
 
   return (
-    <Panel title="Orders">
+    <Panel title="주문">
       <div className="mb-3 flex flex-wrap gap-3">
-        <TextInput label="Symbol" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
-        <SelectInput label="Status" value={status} onChange={setStatus} options={STATUSES} />
-        <SelectInput label="Source" value={source} onChange={setSource} options={SOURCES} />
-        <SelectInput label="Mode" value={mode} onChange={setMode} options={MODES} />
+        <TextInput label="종목" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
+        <SelectInput label="상태" value={status} onChange={setStatus} options={STATUSES} />
+        <SelectInput label="출처" value={source} onChange={setSource} options={SOURCES} />
+        <SelectInput label="모드" value={mode} onChange={setMode} options={MODES} />
       </div>
 
       {isLoading && <LoadingState />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load orders"}
+          message={error instanceof ApiClientError ? error.message : "주문을 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}
@@ -47,9 +47,9 @@ export function OrdersPage() {
 
       <ConfirmDialog
         open={cancelTarget !== null}
-        title="Cancel order"
-        message={`Cancel order ${cancelTarget?.order_id ?? ""} (${cancelTarget?.symbol ?? ""})?`}
-        confirmLabel="Cancel order"
+        title="주문 취소"
+        message={`주문 ${cancelTarget?.order_id ?? ""} (${cancelTarget?.symbol ?? ""}) 을(를) 취소할까요?`}
+        confirmLabel="주문 취소"
         danger
         onCancel={() => setCancelTarget(null)}
         onConfirm={() => {

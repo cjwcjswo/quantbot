@@ -19,23 +19,23 @@ export function Header() {
         <span
           className={`h-2 w-2 rounded-full ${data?.is_alive ? "bg-emerald-500" : "bg-red-500"}`}
         />
-        heartbeat {timeAgo(data?.heartbeat_at)}
+        하트비트 {timeAgo(data?.heartbeat_at)}
       </div>
 
       <span className="text-xs text-slate-500">
-        risk <TextBadge text={statusText(data?.risk_status, "—")} />
+        리스크 <TextBadge text={statusText(data?.risk_status, "—")} />
       </span>
       <span className="text-xs text-slate-500">
-        protection <TextBadge text={statusText(data?.protection_status, "—")} />
+        보호 <TextBadge text={statusText(data?.protection_status, "—")} />
       </span>
       <span className="text-xs text-slate-500">
-        recon <TextBadge text={statusText(data?.reconciliation_status, "—")} />
+        동기화 <TextBadge text={statusText(data?.reconciliation_status, "—")} />
       </span>
 
       <div className="ml-auto flex items-center gap-3 text-xs text-slate-400">
         <span className="flex items-center gap-1">
           <span className={`h-2 w-2 rounded-full ${connected ? "bg-emerald-500" : "bg-red-500"}`} />
-          {connected ? "WS live" : "WS disconnected"}
+          {connected ? "WS 연결됨" : "WS 끊김"}
         </span>
         <span className="tabular-nums">{now.toLocaleTimeString()}</span>
       </div>

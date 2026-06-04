@@ -2,14 +2,14 @@ import { NavLink } from "react-router-dom";
 import { cn } from "@/shared/utils/cn";
 
 const LINKS = [
-  { to: "/", label: "Dashboard", end: true },
-  { to: "/watchlist", label: "Watchlist" },
-  { to: "/positions", label: "Positions" },
-  { to: "/orders", label: "Orders" },
-  { to: "/trades", label: "Trades" },
-  { to: "/events", label: "Events" },
-  { to: "/strategy", label: "Strategy Config" },
-  { to: "/settings", label: "Settings" },
+  { to: "/", label: "대시보드", end: true },
+  { to: "/watchlist", label: "감시 종목" },
+  { to: "/positions", label: "포지션" },
+  { to: "/orders", label: "주문" },
+  { to: "/trades", label: "체결내역" },
+  { to: "/events", label: "이벤트" },
+  { to: "/strategy", label: "전략 설정" },
+  { to: "/settings", label: "설정" },
 ];
 
 export function Sidebar({ open }: { open: boolean }) {

@@ -43,47 +43,47 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-4">
-      <Panel title="Controls">
+      <Panel title="제어">
         <CommandBar />
       </Panel>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <MetricCard label="Bot State" value={s ? <StatusBadge state={s.state} /> : "—"} />
-        <MetricCard label="Mode" value={<ModeBadge mode={s?.mode ?? null} />} />
-        <MetricCard label="Equity" value={formatNumber(p?.equity)} />
+        <MetricCard label="봇 상태" value={s ? <StatusBadge state={s.state} /> : "—"} />
+        <MetricCard label="모드" value={<ModeBadge mode={s?.mode ?? null} />} />
+        <MetricCard label="자산" value={formatNumber(p?.equity)} />
         <MetricCard
-          label="Daily Net PnL"
+          label="일일 순손익"
           value={formatNumber(p?.daily_net_pnl)}
           valueClassName={pnlClass(p?.daily_net_pnl)}
         />
-        <MetricCard label="Open Positions" value={openPositions.length} />
-        <MetricCard label="Open Risk" value={statusText(s?.risk_status, "—")} />
+        <MetricCard label="보유 포지션" value={openPositions.length} />
+        <MetricCard label="리스크" value={statusText(s?.risk_status, "—")} />
         <MetricCard
-          label="Realized"
+          label="실현손익"
           value={formatNumber(p?.realized_pnl)}
           valueClassName={pnlClass(p?.realized_pnl)}
         />
         <MetricCard
-          label="Unrealized"
+          label="미실현손익"
           value={formatNumber(p?.unrealized_pnl)}
           valueClassName={pnlClass(p?.unrealized_pnl)}
         />
-        <MetricCard label="Fees" value={formatNumber(p?.fees)} />
-        <MetricCard label="Funding" value={formatNumber(p?.funding_fees)} />
-        <MetricCard label="Heartbeat" value={timeAgo(s?.heartbeat_at)} />
-        <MetricCard label="TP/SL Protection" value={statusText(s?.protection_status, "—")} />
-        <MetricCard label="Reconciliation" value={statusText(s?.reconciliation_status, "—")} />
+        <MetricCard label="수수료" value={formatNumber(p?.fees)} />
+        <MetricCard label="펀딩비" value={formatNumber(p?.funding_fees)} />
+        <MetricCard label="하트비트" value={timeAgo(s?.heartbeat_at)} />
+        <MetricCard label="TP/SL 보호" value={statusText(s?.protection_status, "—")} />
+        <MetricCard label="동기화" value={statusText(s?.reconciliation_status, "—")} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <Panel title="PnL (daily net)" className="lg:col-span-2">
+        <Panel title="손익 (일일 순손익)" className="lg:col-span-2">
           <PnlChart daily={daily.data?.daily ?? []} />
         </Panel>
         <Panel
-          title="Daily Log"
+          title="일일 로그"
           actions={
             <Button variant="secondary" onClick={() => setLogDate(new Date().toISOString().slice(0, 10))}>
-              Today
+              오늘
             </Button>
           }
         >
@@ -91,15 +91,15 @@ export function DashboardPage() {
         </Panel>
       </div>
 
-      <Panel title="Current Positions">
+      <Panel title="현재 포지션">
         <PositionsTable positions={openPositions} />
       </Panel>
 
       <Panel
-        title="Watchlist (entry candidates)"
+        title="감시 종목 (진입 후보)"
         actions={
           <Button variant="secondary" onClick={() => navigate("/watchlist")}>
-            View all
+            전체 보기
           </Button>
         }
       >
@@ -107,10 +107,10 @@ export function DashboardPage() {
       </Panel>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Panel title="Recent Orders">
+        <Panel title="최근 주문">
           <OrdersTable orders={(orders.data?.orders ?? []).slice(0, 8)} />
         </Panel>
-        <Panel title="Recent Trades">
+        <Panel title="최근 체결">
           <TradesTable
             trades={(trades.data?.trades ?? []).slice(0, 8)}
             onRowClick={(t) => t.trade_id && setTradeId(t.trade_id)}
@@ -118,7 +118,7 @@ export function DashboardPage() {
         </Panel>
       </div>
 
-      <Panel title="Recent Events">
+      <Panel title="최근 이벤트">
         <EventsTable events={(events.data?.events ?? []).slice(0, 12)} />
       </Panel>
 

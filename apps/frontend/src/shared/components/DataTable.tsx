@@ -24,7 +24,7 @@ const ALIGN: Record<string, string> = {
 };
 
 export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty }: Props<T>) {
-  if (rows.length === 0) return <EmptyState label={empty ?? "No rows."} />;
+  if (rows.length === 0) return <EmptyState label={empty ?? "데이터 없음"} />;
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">

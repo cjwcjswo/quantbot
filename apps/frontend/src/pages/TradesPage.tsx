@@ -34,27 +34,27 @@ export function TradesPage() {
   });
 
   return (
-    <Panel title="Trades">
+    <Panel title="체결내역">
       <div className="mb-3 flex flex-wrap gap-3">
-        <TextInput label="Symbol" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
+        <TextInput label="종목" value={symbol} onChange={setSymbol} placeholder="BTCUSDT" />
         <TextInput
-          label="Strategy"
+          label="전략"
           value={strategy}
           onChange={setStrategy}
           placeholder="trend_following"
         />
         <SelectInput
-          label="Entry Mode"
+          label="진입 모드"
           value={entryMode}
           onChange={setEntryMode}
           options={ENTRY_MODES}
         />
-        <SelectInput label="Mode" value={mode} onChange={setMode} options={MODES} />
-        <TextInput label="From" value={from} onChange={setFrom} placeholder="2026-06-01" />
-        <TextInput label="To" value={to} onChange={setTo} placeholder="2026-06-30" />
-        <SelectInput label="PnL" value={pnl} onChange={setPnl} options={PNL} />
+        <SelectInput label="모드" value={mode} onChange={setMode} options={MODES} />
+        <TextInput label="시작일" value={from} onChange={setFrom} placeholder="2026-06-01" />
+        <TextInput label="종료일" value={to} onChange={setTo} placeholder="2026-06-30" />
+        <SelectInput label="손익" value={pnl} onChange={setPnl} options={PNL} />
         <TextInput
-          label="Exit Reason"
+          label="청산 사유"
           value={exitReason}
           onChange={setExitReason}
           placeholder="STOP_LOSS"
@@ -64,7 +64,7 @@ export function TradesPage() {
       {isLoading && <LoadingState />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load trades"}
+          message={error instanceof ApiClientError ? error.message : "체결 내역을 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}

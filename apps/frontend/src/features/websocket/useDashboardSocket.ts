@@ -67,7 +67,7 @@ export function useDashboardSocket(): void {
           queryClient.invalidateQueries({ queryKey: [key] });
         }
         if (msg.type === "manual_intervention_event") {
-          pushToast("warning", "Manual intervention detected");
+          pushToast("warning", "수동 개입이 감지되었습니다");
         }
       };
 

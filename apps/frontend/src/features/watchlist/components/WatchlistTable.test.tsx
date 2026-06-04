@@ -30,20 +30,25 @@ describe("WatchlistTable", () => {
     render(<WatchlistTable entries={[entry()]} />);
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.getByText("LONG")).toBeInTheDocument();
-    expect(screen.getByText("Near")).toBeInTheDocument();
+    expect(screen.getByText("임박")).toBeInTheDocument();
   });
 
-  it("shows a dash lean and No signal for symbols without a signal", () => {
+  it("shows a dash lean and 신호없음 for symbols without a signal", () => {
     render(
       <WatchlistTable
         entries={[entry({ direction: "NONE", readiness: "NO_SIGNAL", signal_score: null })]}
       />,
     );
-    expect(screen.getByText("No signal")).toBeInTheDocument();
+    expect(screen.getByText("신호없음")).toBeInTheDocument();
+  });
+
+  it("renders an entry-proximity progress percentage", () => {
+    render(<WatchlistTable entries={[entry({ readiness: "BREAKOUT" })]} />);
+    expect(screen.getByText("100%")).toBeInTheDocument();
   });
 
   it("renders an explanatory empty state", () => {
     render(<WatchlistTable entries={[]} />);
-    expect(screen.getByText(/scans the universe only while RUNNING/i)).toBeInTheDocument();
+    expect(screen.getByText(/RUNNING 상태에서만 종목을 탐색/)).toBeInTheDocument();
   });
 });

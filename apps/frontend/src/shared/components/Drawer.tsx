@@ -20,7 +20,7 @@ export function Drawer({ open, title, onClose, children }: Props) {
           <button
             className="text-slate-400 hover:text-slate-200"
             onClick={onClose}
-            aria-label="Close"
+            aria-label="닫기"
           >
             ✕
           </button>

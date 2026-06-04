@@ -15,10 +15,10 @@ describe("ConfirmDialog", () => {
         onCancel={() => {}}
       />,
     );
-    const confirmBtn = screen.getByRole("button", { name: "Confirm" });
+    const confirmBtn = screen.getByRole("button", { name: "확인" });
     expect(confirmBtn).toBeDisabled();
 
-    fireEvent.change(screen.getByPlaceholderText("Type LIVE to confirm"), {
+    fireEvent.change(screen.getByPlaceholderText("확인하려면 LIVE 입력"), {
       target: { value: "LIVE" },
     });
     expect(confirmBtn).toBeEnabled();
@@ -31,7 +31,7 @@ describe("ConfirmDialog", () => {
     render(
       <ConfirmDialog open title="x" message="y" onConfirm={() => {}} onCancel={onCancel} />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "취소" }));
     expect(onCancel).toHaveBeenCalled();
   });
 });

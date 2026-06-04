@@ -43,7 +43,7 @@ export function SelectInput({
         onChange={(e) => onChange(e.target.value)}
         className="w-36 rounded border border-panelBorder bg-bg px-2 py-1 text-sm text-slate-100 outline-none focus:border-sky-500"
       >
-        <option value="">All</option>
+        <option value="">전체</option>
         {options.map((o) => (
           <option key={o} value={o}>
             {o}

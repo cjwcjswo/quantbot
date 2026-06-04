@@ -15,11 +15,11 @@ export function PositionsPage() {
   const closePercent = Math.min(100, Math.max(1, Number.isFinite(percent) ? percent : 100));
 
   return (
-    <Panel title="Positions">
+    <Panel title="포지션">
       {isLoading && <LoadingState />}
       {error && (
         <ErrorState
-          message={error instanceof ApiClientError ? error.message : "Failed to load positions"}
+          message={error instanceof ApiClientError ? error.message : "포지션을 불러오지 못했습니다"}
           onRetry={() => refetch()}
         />
       )}
@@ -27,8 +27,8 @@ export function PositionsPage() {
         <PositionsTable positions={data.positions} onClose={(symbol) => setTarget(symbol)} />
       )}
 
-      <Modal open={target !== null} title={`Close ${target ?? ""}`} onClose={() => setTarget(null)}>
-        <p className="text-sm text-slate-300">Select how much of the position to close.</p>
+      <Modal open={target !== null} title={`${target ?? ""} 청산`} onClose={() => setTarget(null)}>
+        <p className="text-sm text-slate-300">청산할 비율을 선택하세요.</p>
         <div className="mt-3 flex gap-2">
           {[25, 50, 100].map((v) => (
             <Button
@@ -54,7 +54,7 @@ export function PositionsPage() {
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setTarget(null)}>
-            Cancel
+            취소
           </Button>
           <Button
             variant="danger"
@@ -63,7 +63,7 @@ export function PositionsPage() {
               setTarget(null);
             }}
           >
-            Close {closePercent}%
+            {closePercent}% 청산
           </Button>
         </div>
       </Modal>

@@ -17,10 +17,10 @@ export function useCancelOrder() {
   return useMutation({
     mutationFn: (orderId: string) => api.cancelOrder(orderId),
     onSuccess: (res) => {
-      pushToast("success", `Cancel requested (command ${res.command_id.slice(0, 8)})`);
+      pushToast("success", `취소 요청됨 (명령 ${res.command_id.slice(0, 8)})`);
       qc.invalidateQueries({ queryKey: ["orders"] });
     },
     onError: (e) =>
-      pushToast("error", e instanceof ApiClientError ? e.message : "Cancel failed"),
+      pushToast("error", e instanceof ApiClientError ? e.message : "취소 실패"),
   });
 }
