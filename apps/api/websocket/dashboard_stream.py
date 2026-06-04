@@ -161,23 +161,36 @@ class DashboardStream:
     # ------------------------------------------------------------------ #
     async def _pubsub_loop(self) -> None:
         while self._running:
+            pubsub = self._redis.pubsub()
             try:
-                pubsub = self._redis.pubsub()
                 await pubsub.subscribe(state_keys.EVENTS_BOT)
-                async for message in pubsub.listen():
-                    if not self._running:
-                        break
-                    if message.get("type") != "message":
+                while self._running:
+                    # Poll with a timeout: an idle window returns None (normal),
+                    # so we don't misclassify "no events yet" as a connection
+                    # error and churn through reconnects (which dropped events
+                    # and spammed warnings).
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True, timeout=1.0
+                    )
+                    if message is None:
                         continue
-                    await self.dispatch_event(message.get("data"))
+                    if message.get("type") == "message":
+                        await self.dispatch_event(message.get("data"))
             except asyncio.CancelledError:
                 break
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001 - real pub/sub failure: degrade + retry
                 logger.warning("pubsub loop error: %s", exc)
                 await self._manager.broadcast(
                     self._wrap("bot_status", {"degraded": True})
                 )
                 await asyncio.sleep(3)
+            finally:
+                close = getattr(pubsub, "aclose", None) or getattr(pubsub, "close", None)
+                if close is not None:
+                    try:
+                        await close()
+                    except Exception:  # noqa: BLE001
+                        pass
 
     async def _snapshot_loop(self) -> None:
         while self._running:
