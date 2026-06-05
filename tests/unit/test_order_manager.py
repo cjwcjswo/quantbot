@@ -138,6 +138,70 @@ async def test_limit_full_fill(config):
     assert gw.placed_orders[0].order_type == OrderType.LIMIT
 
 
+class PendingLimitGateway(FakeGateway):
+    async def get_order(self, symbol, order_id, client_order_id):
+        return ExchangeOrder(
+            symbol=symbol,
+            order_id=order_id or "pending",
+            client_order_id=client_order_id,
+            side=Side.BUY,
+            order_type="Limit",
+            price=Decimal("100"),
+            qty=Decimal("1"),
+            status=OrderStatus.NEW,
+        )
+
+
+async def test_scout_limit_uses_30_second_ttl(config):
+    config.orders.scout_order_type = "LIMIT"
+    config.orders.limit_reorder_attempts = 0
+    now = 0.0
+
+    def clock():
+        return now
+
+    async def sleep(delay):
+        nonlocal now
+        now += delay
+
+    gw = PendingLimitGateway()
+    gw.fill_ratio = Decimal("0")
+    om = OrderManager(gw, config, clock=clock, sleep=sleep, poll_interval_sec=1)
+
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("1"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT, best_bid=_BID, best_ask=_ASK,
+    )
+
+    assert out.status == "NO_FILL"
+    assert now == 30
+
+
+async def test_retest_limit_uses_20_second_ttl(config):
+    config.orders.retest_order_type = "LIMIT"
+    config.orders.limit_reorder_attempts = 0
+    now = 0.0
+
+    def clock():
+        return now
+
+    async def sleep(delay):
+        nonlocal now
+        now += delay
+
+    gw = PendingLimitGateway()
+    gw.fill_ratio = Decimal("0")
+    om = OrderManager(gw, config, clock=clock, sleep=sleep, poll_interval_sec=1)
+
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("1"),
+        entry_mode=EntryMode.RETEST_CONFIRM, best_bid=_BID, best_ask=_ASK,
+    )
+
+    assert out.status == "NO_FILL"
+    assert now == 20
+
+
 async def test_order_manager_reserves_and_clears_pending_order(config):
     gw = FakeGateway()
     reserved = []

@@ -169,6 +169,7 @@ class OrderManager:
             res = await self._place(
                 request,
                 entry_mode=entry_mode,
+                limit_ttl_sec=self._limit_ttl_sec(entry_mode),
             )
             filled = res.filled_qty
             if filled <= 0:
@@ -256,7 +257,11 @@ class OrderManager:
     # order timeout recovery (impl doc §17.1)
     # ------------------------------------------------------------------ #
     async def _place(
-        self, request: OrderRequest, entry_mode: EntryMode | None = None
+        self,
+        request: OrderRequest,
+        entry_mode: EntryMode | None = None,
+        *,
+        limit_ttl_sec: int | None = None,
     ) -> ExchangeOrderResult:
         request = await self._normalize_request_qty(request)
         if request.qty <= 0:
@@ -293,7 +298,7 @@ class OrderManager:
         except Exception:
             self._clear_order_reservation(request.client_order_id)
             raise
-        resolved = await self._resolve(request, placed)
+        resolved = await self._resolve(request, placed, limit_ttl_sec=limit_ttl_sec)
         await self._record_order(request, resolved, entry_mode)
         self._clear_order_reservation(request.client_order_id)
         return resolved
@@ -307,7 +312,11 @@ class OrderManager:
             self._pending_order_clear_sink(client_order_id)
 
     async def _resolve(
-        self, request: OrderRequest, placed: ExchangeOrderResult
+        self,
+        request: OrderRequest,
+        placed: ExchangeOrderResult,
+        *,
+        limit_ttl_sec: int | None = None,
     ) -> ExchangeOrderResult:
         """Resolve fill state after create-order.
 
@@ -330,7 +339,11 @@ class OrderManager:
         ttl = (
             0.0
             if request.time_in_force == TimeInForce.IOC
-            else float(self.cfg.orders.limit_order_ttl_sec)
+            else float(
+                limit_ttl_sec
+                if limit_ttl_sec is not None
+                else self.cfg.orders.limit_order_ttl_sec
+            )
         )
         deadline = self._clock() + ttl
         last = placed
@@ -409,6 +422,13 @@ class OrderManager:
             self._order_sink(order)
         if persist and self._logger is not None:
             await self._logger.log_order(order, mode="LIVE")
+
+    def _limit_ttl_sec(self, entry_mode: EntryMode | None) -> int:
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            return self.cfg.orders.scout_limit_order_ttl_sec
+        if entry_mode == EntryMode.RETEST_CONFIRM:
+            return self.cfg.orders.retest_limit_order_ttl_sec
+        return self.cfg.orders.limit_order_ttl_sec
 
     async def _normalize_request_qty(self, request: OrderRequest) -> OrderRequest:
         meta = await self._meta_for(request.symbol)

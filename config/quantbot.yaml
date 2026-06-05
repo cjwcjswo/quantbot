@@ -118,11 +118,13 @@ entry:
 
 orders:
   live_new_entry_market_order_allowed: false
-  scout_order_type: "AGGRESSIVE_LIMIT"
+  scout_order_type: "LIMIT"
   breakout_order_type: "AGGRESSIVE_LIMIT"
-  retest_order_type: "AGGRESSIVE_LIMIT"
+  retest_order_type: "LIMIT"
   max_slippage_percent: 0.08
   limit_order_ttl_sec: 10
+  scout_limit_order_ttl_sec: 30
+  retest_limit_order_ttl_sec: 20
   limit_reorder_attempts: 1
   aggressive_limit_time_in_force: "IOC"
   use_reduce_only_for_exits: true

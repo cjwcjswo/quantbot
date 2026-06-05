@@ -40,3 +40,20 @@ async def test_filter_by_severity(client, session_factory):
         "/events", params={"severity": "ERROR"})).json()["data"]
     assert all(e["severity"] == "ERROR" for e in data["events"])
     assert any(e["type"] == "RISK_LOCKED" for e in data["events"])
+
+
+async def test_severity_filter_applies_before_pagination(client, session_factory):
+    await add_rows(session_factory, BotEventRow(type="ORDER_FAILED", symbol="BTCUSDT"))
+    await add_rows(
+        session_factory,
+        *[
+            BotEventRow(type="SIGNAL", symbol=f"S{i}USDT", message="noise")
+            for i in range(250)
+        ],
+    )
+
+    data = (await client.get(
+        "/events", params={"severity": "ERROR", "limit": 10}
+    )).json()["data"]
+
+    assert [e["type"] for e in data["events"]] == ["ORDER_FAILED"]

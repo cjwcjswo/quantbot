@@ -20,8 +20,11 @@ def test_loads_repo_config():
     assert cfg.risk.account_risk_per_trade_percent == 1.0
     assert cfg.bot.max_symbols_to_watch == 10
     assert cfg.scanner.max_candidates == 10
-    assert cfg.orders.scout_order_type == "AGGRESSIVE_LIMIT"
-    assert cfg.orders.retest_order_type == "AGGRESSIVE_LIMIT"
+    assert cfg.orders.scout_order_type == "LIMIT"
+    assert cfg.orders.breakout_order_type == "AGGRESSIVE_LIMIT"
+    assert cfg.orders.retest_order_type == "LIMIT"
+    assert cfg.orders.scout_limit_order_ttl_sec == 30
+    assert cfg.orders.retest_limit_order_ttl_sec == 20
     assert cfg.entry.anti_chase.max_rsi_long == 76
     assert cfg.position_protection.max_seconds_position_without_tpsl == 3
     assert cfg.reconciliation.interval_sec_when_flat == 10

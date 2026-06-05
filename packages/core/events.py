@@ -50,6 +50,54 @@ class BotEventType(StrEnum):
     NEW_ENTRIES_PAUSED = "NEW_ENTRIES_PAUSED"
 
 
+_CRITICAL_EVENTS = {
+    "EMERGENCY_STOP",
+    "EMERGENCY_CLOSE",
+    "EMERGENCY_TPSL_FAILED",
+}
+_ERROR_EVENTS = {
+    "COMMAND_FAILED",
+    "TPSL_FAILED",
+    "ORDER_FAILED",
+    "KILL_SWITCH_TRIPPED",
+    "RISK_LOCKED",
+    "ORDER_LOCKED",
+}
+_WARNING_EVENTS = {
+    "DATA_QUALITY_BLOCK",
+    "NEW_ENTRIES_PAUSED",
+    "EXTERNAL_POSITION_DETECTED",
+    "EXTERNAL_ORDER_DETECTED",
+    "POSITION_QUANTITY_MISMATCH",
+}
+_SEVERITY_TO_EVENTS = {
+    "CRITICAL": _CRITICAL_EVENTS,
+    "ERROR": _ERROR_EVENTS,
+    "WARNING": _WARNING_EVENTS,
+}
+
+
+def event_severity(event_type: str | BotEventType, stored: str | None = None) -> str:
+    if stored and stored != "INFO":
+        return stored.upper()
+    value = event_type.value if isinstance(event_type, BotEventType) else event_type
+    for severity, event_types in _SEVERITY_TO_EVENTS.items():
+        if value in event_types:
+            return severity
+    return (stored or "INFO").upper()
+
+
+def event_types_for_severity(severity: str) -> set[str]:
+    return set(_SEVERITY_TO_EVENTS.get(severity.upper(), set()))
+
+
+def non_info_event_types() -> set[str]:
+    out: set[str] = set()
+    for event_types in _SEVERITY_TO_EVENTS.values():
+        out.update(event_types)
+    return out
+
+
 class BotEvent(BaseModel):
     """A structured event emitted by the Bot Engine."""
 

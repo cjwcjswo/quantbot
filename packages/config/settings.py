@@ -171,6 +171,8 @@ class OrdersSection(_Section):
     retest_order_type: str = "LIMIT"
     max_slippage_percent: float = 0.05
     limit_order_ttl_sec: int = 10
+    scout_limit_order_ttl_sec: int = 30
+    retest_limit_order_ttl_sec: int = 20
     limit_reorder_attempts: int = 1
     aggressive_limit_time_in_force: str = "IOC"
     use_reduce_only_for_exits: bool = True

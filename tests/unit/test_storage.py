@@ -32,8 +32,11 @@ async def _count(session_factory, model) -> int:
 
 async def test_event_sink_persists(session_factory):
     tl = TradeLogger(session_factory)
-    await tl(BotEvent(type=BotEventType.POSITION_OPENED, symbol="BTCUSDT", message="x"))
+    await tl(BotEvent(type=BotEventType.ORDER_FAILED, symbol="BTCUSDT", message="x"))
     assert await _count(session_factory, BotEventRow) == 1
+    async with session_factory() as s:
+        row = (await s.execute(select(BotEventRow))).scalar_one()
+    assert row.severity == "ERROR"
 
 
 async def test_log_signal(session_factory):

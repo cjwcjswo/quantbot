@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from packages.core.events import BotEvent
+from packages.core.events import BotEvent, event_severity
 from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
     BotEventRow,
@@ -64,6 +64,7 @@ class TradeLogger:
                 symbol=event.symbol,
                 message=event.message,
                 data=event.data,
+                severity=event_severity(event.type),
             )
         )
 
