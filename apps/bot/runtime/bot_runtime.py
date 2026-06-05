@@ -412,7 +412,7 @@ class BotRuntime:
     async def _publish_state(self) -> None:
         if self._state_publisher is None:
             return
-        positions = list(self.runtime_state.positions.values())
+        positions = self.runtime_state.open_positions()
         snap = compute_pnl(self.runtime_state.active_bot_positions(), {})
         await self._state_publisher.publish(
             state=self.state_machine.state,
@@ -453,12 +453,13 @@ class BotRuntime:
             marks = {t.symbol: t.last_price for t in self._collector.tickers()}
         positions = list(self.runtime_state.positions.values())
         snap = compute_pnl(positions, marks)
+        open_positions = self.runtime_state.open_positions()
         equity = await self._equity_snapshot(marks)
         self._last_equity = equity
         if self._state_publisher is not None:
             await self._state_publisher.publish(
                 state=self.state_machine.state,
-                positions=list(self.runtime_state.positions.values()),
+                positions=open_positions,
                 pnl={"realized": str(snap.realized), "unrealized": str(snap.unrealized),
                      "fees": str(snap.fees), "net": str(snap.net), "equity": str(equity)},
                 risk_status=self._risk_status(),
@@ -1137,7 +1138,7 @@ class BotRuntime:
 
     def _protection_status(self) -> dict:
         positions = []
-        for p in self.runtime_state.positions.values():
+        for p in self.runtime_state.open_positions():
             positions.append(
                 {
                     "symbol": p.symbol,

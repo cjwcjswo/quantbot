@@ -37,6 +37,17 @@ class RuntimeState:
             if p.is_bot_managed and p.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
         ]
 
+    def open_positions(self) -> list[Position]:
+        return [
+            p
+            for p in self.positions.values()
+            if p.status in (
+                PositionStatus.PENDING,
+                PositionStatus.ACTIVE,
+                PositionStatus.CLOSING,
+            )
+        ]
+
     def has_open_bot_position(self) -> bool:
         return len(self.active_bot_positions()) > 0
 

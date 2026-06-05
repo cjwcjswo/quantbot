@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from apps.api.repositories import position_repository
@@ -13,6 +14,24 @@ _FIELDS = (
     "avg_entry_price", "mark_price", "unrealized_pnl", "leverage",
     "entry_mode", "strategy_id", "protection_status", "opened_at",
 )
+
+_OPEN_STATUSES = {"PENDING", "ACTIVE", "CLOSING"}
+
+
+def _qty_is_positive(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return Decimal(str(value)) > 0
+    except (InvalidOperation, ValueError):
+        return True
+
+
+def _is_open_snapshot(p: dict) -> bool:
+    status = p.get("status")
+    if status is not None and status not in _OPEN_STATUSES:
+        return False
+    return _qty_is_positive(p.get("qty"))
 
 
 def _from_snapshot(p: dict, mode: str | None) -> dict:
@@ -79,7 +98,8 @@ async def list_positions(redis: Any, session_factory: Any) -> dict:
     if raw:
         try:
             data = json.loads(raw)
-            return {"positions": [_from_snapshot(p, mode) for p in data],
+            open_data = [p for p in data if _is_open_snapshot(p)]
+            return {"positions": [_from_snapshot(p, mode) for p in open_data],
                     "source": "redis"}
         except (ValueError, TypeError):
             degraded = True  # malformed snapshot -> fall through to DB

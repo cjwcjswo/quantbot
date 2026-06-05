@@ -9,7 +9,7 @@ import json
 import time
 from typing import Any
 
-from packages.core.enums import BotMode, BotState
+from packages.core.enums import BotMode, BotState, PositionStatus
 from packages.core.models import Position
 from packages.messaging import state_keys
 
@@ -55,6 +55,14 @@ def _position_json(
     }
 
 
+def _is_open_position(p: Position) -> bool:
+    return p.status in (
+        PositionStatus.PENDING,
+        PositionStatus.ACTIVE,
+        PositionStatus.CLOSING,
+    )
+
+
 class StatePublisher:
     def __init__(
         self,
@@ -85,6 +93,7 @@ class StatePublisher:
         await self._redis.set(state_keys.BOT_MODE, self._mode.value)
         await self._redis.set(state_keys.BOT_HEARTBEAT, str(int(time.time() * 1000)))
         if positions is not None:
+            open_positions = [p for p in positions if _is_open_position(p)]
             await self._redis.set(
                 state_keys.BOT_POSITIONS,
                 json.dumps([
@@ -94,7 +103,7 @@ class StatePublisher:
                         require_sl=self._require_sl,
                         require_tp=self._require_tp,
                     )
-                    for p in positions
+                    for p in open_positions
                 ]),
             )
         if pnl is not None:

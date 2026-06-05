@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 from apps.bot.runtime import BotRuntime
 from packages.config import load_app_config
 from packages.config.settings import Secrets
-from packages.core.enums import BotMode, BotState
+from packages.core.enums import BotMode, BotState, PositionSide, PositionSource, PositionStatus
+from packages.core.models import Position
 from packages.guards import ClockSyncGuard
 from packages.reconciliation.reconciliation_manager import ReconcileResult
 from packages.storage import (
@@ -76,6 +77,37 @@ async def test_state_publish_includes_risk_protection_reconciliation(redis, sess
     assert await redis.get("bot:risk_status") is not None
     assert await redis.get("bot:protection_status") is not None
     assert await redis.get("bot:reconciliation_status") is not None
+    await rt.shutdown()
+
+
+async def test_state_publish_excludes_closed_positions(redis, session_factory):
+    import json
+
+    rt = _runtime(redis, session_factory)
+    await rt.startup()
+    rt.runtime_state.positions["BTCUSDT"] = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("0.01"),
+        avg_entry_price=Decimal("65000"),
+    )
+    rt.runtime_state.positions["1000PEPEUSDT"] = Position(
+        symbol="1000PEPEUSDT",
+        side=PositionSide.SHORT,
+        status=PositionStatus.CLOSED,
+        source=PositionSource.BOT,
+        qty=Decimal("0"),
+        avg_entry_price=Decimal("0.00266"),
+    )
+
+    await rt._publish_state()
+
+    positions = json.loads(await redis.get("bot:positions"))
+    protection = json.loads(await redis.get("bot:protection_status"))
+    assert [p["symbol"] for p in positions] == ["BTCUSDT"]
+    assert [p["symbol"] for p in protection["positions"]] == ["BTCUSDT"]
     await rt.shutdown()
 
 

@@ -26,6 +26,22 @@ async def test_list_from_redis_snapshot(client, redis):
     assert positions["ETHUSDT"]["source"] == "EXTERNAL"
 
 
+async def test_list_filters_closed_redis_snapshot(client, redis):
+    snap = [
+        {"symbol": "BTCUSDT", "side": "LONG", "source": "BOT", "mode": "LIVE",
+         "status": "ACTIVE", "qty": "0.01", "manual_added_qty": "0",
+         "avg_entry_price": "65000"},
+        {"symbol": "1000PEPEUSDT", "side": "SHORT", "source": "BOT", "mode": "LIVE",
+         "status": "CLOSED", "qty": "0", "manual_added_qty": "0",
+         "avg_entry_price": "0.00266"},
+    ]
+    await redis.set("bot:positions", json.dumps(snap))
+
+    data = (await client.get("/positions")).json()["data"]
+
+    assert [p["symbol"] for p in data["positions"]] == ["BTCUSDT"]
+
+
 async def test_list_fallback_to_postgres(client, redis, session_factory):
     await add_rows(session_factory, PositionRow(
         symbol="BTCUSDT", side="LONG", status="ACTIVE", source="BOT",
