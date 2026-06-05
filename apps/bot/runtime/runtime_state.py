@@ -21,6 +21,7 @@ class RuntimeState:
         self.positions: dict[str, Position] = {}  # by symbol (bot + adopted)
         self.orders: dict[str, Order] = {}  # by client_order_id
         self.external_orders: dict[str, ExchangeOrder] = {}  # by order_id
+        self.pending_order_symbols: dict[str, str] = {}  # client_order_id -> symbol
         # new-entry pause window
         self._new_entry_pause_until: float = 0.0
 
@@ -46,8 +47,20 @@ class RuntimeState:
                 ids.add(o.order_id)
             if o.client_order_id:
                 ids.add(o.client_order_id)
+        ids.update(self.pending_order_symbols.keys())
         ids.update(self.external_orders.keys())
         return ids
+
+    def reserve_order(self, client_order_id: str | None, symbol: str) -> None:
+        if client_order_id:
+            self.pending_order_symbols[client_order_id] = symbol
+
+    def clear_order_reservation(self, client_order_id: str | None) -> None:
+        if client_order_id:
+            self.pending_order_symbols.pop(client_order_id, None)
+
+    def has_pending_order_for_symbol(self, symbol: str) -> bool:
+        return symbol in self.pending_order_symbols.values()
 
     # ---- new-entry pause window (impl doc §4.3) ------------------------ #
     def pause_new_entries(self, seconds: float) -> None:

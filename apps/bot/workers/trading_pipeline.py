@@ -390,6 +390,7 @@ class TradingService:
             strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
             breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
         )
+        self._state.positions[symbol] = pos
 
         # Activation: LIVE requires TP/SL protection (§5); PAPER stores virtual levels.
         if self.mode == BotMode.LIVE and self._protection is not None:
@@ -405,7 +406,6 @@ class TradingService:
         else:
             self._positions.mark_active_paper(pos)
 
-        self._state.positions[symbol] = pos
         if self._logger is not None:
             protection = (
                 "TPSL_OK"

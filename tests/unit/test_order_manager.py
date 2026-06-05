@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import func, select
 
-from packages.core.enums import EntryMode, OrderType, Side
+from packages.core.enums import EntryMode, OrderStatus, OrderType, Side
 from packages.core.errors import OrderError
 from packages.core.models import ExchangeOrder
 from packages.execution import OrderManager, assert_live_new_entry_allowed
@@ -89,6 +89,23 @@ async def test_limit_no_fill_gives_up_no_market(config):
     assert len(gw.cancelled) == 2
 
 
+async def test_limit_no_fill_updates_runtime_order_to_cancelled(config):
+    config.orders.limit_reorder_attempts = 0
+    gw = FakeGateway()
+    gw.fill_ratio = Decimal("0")
+    recorded = []
+    om = OrderManager(gw, config, order_sink=recorded.append)
+
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT, best_bid=_BID, best_ask=_ASK,
+    )
+
+    assert out.status == "NO_FILL"
+    assert recorded[-1].status == OrderStatus.CANCELLED
+    assert recorded[-1].client_order_id == gw.cancelled[-1][2]
+
+
 async def test_limit_full_fill(config):
     om, gw = _om(config, fill_ratio="1")
     out = await om.place_entry(
@@ -97,6 +114,27 @@ async def test_limit_full_fill(config):
     )
     assert out.status == "FILLED"
     assert gw.placed_orders[0].order_type == OrderType.LIMIT
+
+
+async def test_order_manager_reserves_and_clears_pending_order(config):
+    gw = FakeGateway()
+    reserved = []
+    cleared = []
+    om = OrderManager(
+        gw,
+        config,
+        pending_order_sink=lambda cid, symbol: reserved.append((cid, symbol)),
+        pending_order_clear_sink=cleared.append,
+    )
+
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("5"),
+        entry_mode=EntryMode.RETEST_CONFIRM, best_bid=_BID, best_ask=_ASK,
+    )
+
+    assert out.status == "FILLED"
+    assert reserved == [(out.client_order_id, "BTCUSDT")]
+    assert cleared == [out.client_order_id]
 
 
 async def test_reduce_only_exit(config):

@@ -62,6 +62,8 @@ class OrderManager:
         poll_interval_sec: float = 0.25,
         trade_logger=None,
         order_sink: Callable[[Order], None] | None = None,
+        pending_order_sink: Callable[[str | None, str], None] | None = None,
+        pending_order_clear_sink: Callable[[str | None], None] | None = None,
     ) -> None:
         self._gw = gateway
         self.cfg = config
@@ -70,6 +72,8 @@ class OrderManager:
         self._poll_interval_sec = poll_interval_sec
         self._logger = trade_logger
         self._order_sink = order_sink
+        self._pending_order_sink = pending_order_sink
+        self._pending_order_clear_sink = pending_order_clear_sink
 
     # ------------------------------------------------------------------ #
     @staticmethod
@@ -149,20 +153,33 @@ class OrderManager:
         tries = self.cfg.orders.limit_reorder_attempts + 1
         for _ in range(tries):
             cid = self._cid()
+            request = OrderRequest(
+                symbol=symbol, side=side, order_type=OrderType.LIMIT,
+                qty=qty, price=price, time_in_force=TimeInForce.GTC,
+                client_order_id=cid,
+            )
             res = await self._place(
-                OrderRequest(
-                    symbol=symbol, side=side, order_type=OrderType.LIMIT,
-                    qty=qty, price=price, time_in_force=TimeInForce.GTC,
-                    client_order_id=cid,
-                ),
+                request,
                 entry_mode=entry_mode,
             )
             filled = res.filled_qty
             if filled <= 0:
                 await self._safe_cancel(symbol, res.order_id, cid)
+                await self._record_order(
+                    request,
+                    res.model_copy(update={"status": OrderStatus.CANCELLED}),
+                    entry_mode,
+                    persist=False,
+                )
                 continue  # 0% within TTL -> cancel and maybe reorder
             if filled < qty:
                 await self._safe_cancel(symbol, res.order_id, cid)
+                await self._record_order(
+                    request,
+                    res.model_copy(update={"status": OrderStatus.CANCELLED}),
+                    entry_mode,
+                    persist=False,
+                )
                 return OrderOutcome("PARTIAL", filled, res.avg_fill_price, res.order_id, cid)
             return OrderOutcome("FILLED", filled, res.avg_fill_price, res.order_id, cid)
         # Scout/Retest never convert to MARKET (impl doc §12.3).
@@ -231,12 +248,13 @@ class OrderManager:
     async def _place(
         self, request: OrderRequest, entry_mode: EntryMode | None = None
     ) -> ExchangeOrderResult:
+        self._reserve_order(request)
         try:
             placed = await self._gw.place_order(request)
         except OrderTimeoutError:
             recovered = await self.recover_order(request.symbol, request.client_order_id)
             if recovered is not None:
-                return ExchangeOrderResult(
+                result = ExchangeOrderResult(
                     symbol=request.symbol,
                     order_id=recovered.order_id,
                     client_order_id=recovered.client_order_id,
@@ -244,13 +262,30 @@ class OrderManager:
                     filled_qty=recovered.cum_exec_qty,
                     avg_fill_price=recovered.avg_price,
                 )
+                await self._record_order(request, result, entry_mode)
+                self._clear_order_reservation(request.client_order_id)
+                return result
             # Not found: retry once with a fresh id (caller handled idempotency).
+            self._clear_order_reservation(request.client_order_id)
             retry = request.model_copy(update={"client_order_id": self._cid("retry")})
+            self._reserve_order(retry)
             placed = await self._gw.place_order(retry)
             request = retry
+        except Exception:
+            self._clear_order_reservation(request.client_order_id)
+            raise
         resolved = await self._resolve(request, placed)
         await self._record_order(request, resolved, entry_mode)
+        self._clear_order_reservation(request.client_order_id)
         return resolved
+
+    def _reserve_order(self, request: OrderRequest) -> None:
+        if self._pending_order_sink is not None:
+            self._pending_order_sink(request.client_order_id, request.symbol)
+
+    def _clear_order_reservation(self, client_order_id: str | None) -> None:
+        if self._pending_order_clear_sink is not None:
+            self._pending_order_clear_sink(client_order_id)
 
     async def _resolve(
         self, request: OrderRequest, placed: ExchangeOrderResult
@@ -334,6 +369,8 @@ class OrderManager:
         request: OrderRequest,
         result: ExchangeOrderResult,
         entry_mode: EntryMode | None,
+        *,
+        persist: bool = True,
     ) -> None:
         order = Order(
             symbol=request.symbol,
@@ -351,5 +388,5 @@ class OrderManager:
         )
         if self._order_sink is not None:
             self._order_sink(order)
-        if self._logger is not None:
+        if persist and self._logger is not None:
             await self._logger.log_order(order, mode="LIVE")

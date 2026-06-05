@@ -1,6 +1,7 @@
 """Tests for ExchangeGateway protocol conformance and FakeGateway behavior."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,6 +12,7 @@ from packages.core.models import (
     TradingStopRequest,
 )
 from packages.exchange import ExchangeGateway
+from packages.exchange.bybit_gateway import BybitExchangeGateway
 from tests.fakes import FakeGateway
 
 
@@ -99,6 +101,33 @@ async def test_set_and_read_tpsl():
     )
     state = await gw.get_position_tpsl("BTCUSDT")
     assert state.is_protected
+    assert state.take_profit == Decimal("120")
+    assert state.stop_loss == Decimal("90")
+
+
+async def test_bybit_tpsl_reads_active_position_row():
+    gw = BybitExchangeGateway.__new__(BybitExchangeGateway)
+    gw._category = "linear"
+    gw._http = SimpleNamespace(get_positions=object())
+
+    async def fake_rest(_fn, **_kwargs):
+        return {
+            "list": [
+                {
+                    "symbol": "BTCUSDT", "side": "", "size": "0",
+                    "takeProfit": "", "stopLoss": "",
+                },
+                {
+                    "symbol": "BTCUSDT", "side": "Buy", "size": "1",
+                    "takeProfit": "120", "stopLoss": "90",
+                },
+            ]
+        }
+
+    gw._rest = fake_rest
+
+    state = await gw.get_position_tpsl("BTCUSDT")
+
     assert state.take_profit == Decimal("120")
     assert state.stop_loss == Decimal("90")
 

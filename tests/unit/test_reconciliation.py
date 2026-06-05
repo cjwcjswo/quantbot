@@ -104,6 +104,25 @@ async def test_external_close_marks_closed(config, events):
     assert BotEventType.POSITION_CLOSED_EXTERNALLY in events.types()
 
 
+async def test_external_position_closed_when_exchange_flat(config, events):
+    state, gw, recon = _make(config, events)
+    pos = Position(
+        symbol="1000PEPEUSDT",
+        side=PositionSide.SHORT,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.EXTERNAL,
+        qty=Decimal("70500"),
+        avg_entry_price=Decimal("0.002869"),
+    )
+    state.positions[pos.symbol] = pos
+
+    result = await recon.reconcile_once()
+
+    assert pos.status == PositionStatus.CLOSED
+    assert "1000PEPEUSDT" in result.external_closes
+    assert BotEventType.POSITION_CLOSED_EXTERNALLY in events.types()
+
+
 async def test_external_order_detected_not_cancelled(config, events):
     state, gw, recon = _make(config, events)
     gw.open_orders.append(
@@ -138,6 +157,48 @@ async def test_known_order_not_flagged_external(config, events):
     )
     result = await recon.reconcile_once()
     assert result.external_orders == []
+
+
+async def test_pending_bot_order_not_flagged_external_or_adopted(config, events):
+    state, gw, recon = _make(config, events)
+    state.reserve_order("qb-pepe", "1000PEPEUSDT")
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol="1000PEPEUSDT", order_id="bybit-pepe", client_order_id="qb-pepe",
+            side=Side.SELL, order_type="Limit",
+            price=Decimal("0.002869"), qty=Decimal("70500"),
+        )
+    )
+    gw.set_position(
+        ExchangePosition(
+            symbol="1000PEPEUSDT", side=PositionSide.SHORT,
+            size=Decimal("70500"), avg_price=Decimal("0.002869"),
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.external_orders == []
+    assert result.external_positions == []
+    assert state.get_position("1000PEPEUSDT") is None
+    assert not state.new_entries_paused()
+
+
+async def test_bot_prefix_order_not_flagged_external_after_restart(config, events):
+    state, gw, recon = _make(config, events)
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol="BTCUSDT", order_id="bybit-1", client_order_id="qb-restarted",
+            side=Side.BUY, order_type="Limit",
+            price=Decimal("90"), qty=Decimal("1"), status=OrderStatus.NEW,
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.external_orders == []
+    assert state.external_orders == {}
+    assert not state.new_entries_paused()
 
 
 async def test_in_sync_no_events(config, events):

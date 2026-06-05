@@ -572,7 +572,13 @@ class BybitExchangeGateway:
         rows = result.get("list", [])
         if not rows:
             return PositionTpSlState(symbol=symbol, take_profit=None, stop_loss=None)
-        item = rows[0]
+        item = next(
+            (
+                row for row in rows
+                if _dec(row.get("size")) > 0 and row.get("side") in ("Buy", "Sell")
+            ),
+            rows[0],
+        )
         return PositionTpSlState(
             symbol=symbol,
             take_profit=_opt_dec(item.get("takeProfit")),

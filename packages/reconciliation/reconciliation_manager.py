@@ -22,6 +22,8 @@ from packages.reconciliation.manual_intervention_handler import (
 
 logger = logging.getLogger(__name__)
 
+_BOT_CLIENT_ORDER_PREFIXES = ("qb-", "retry-", "exit-", "ptp-")
+
 
 @dataclass
 class ReconcileResult:
@@ -87,6 +89,8 @@ class ReconciliationManager:
         for symbol, exch in exch_by_symbol.items():
             internal = self._state.get_position(symbol)
             if internal is None or internal.status == PositionStatus.CLOSED:
+                if self._state.has_pending_order_for_symbol(symbol):
+                    continue
                 await self._handler.handle_external_position(exch)
                 result.external_positions.append(symbol)
             elif internal.source == PositionSource.EXTERNAL:
@@ -105,8 +109,7 @@ class ReconciliationManager:
         # Internal positions Bybit no longer reports => closed externally.
         for symbol, internal in list(self._state.positions.items()):
             if (
-                internal.source == PositionSource.BOT
-                and internal.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
+                internal.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
                 and symbol not in exch_by_symbol
             ):
                 await self._handler.handle_external_close(internal)
@@ -115,12 +118,21 @@ class ReconciliationManager:
     async def _reconcile_orders(self, result: ReconcileResult) -> None:
         known = self._state.known_order_ids()
         for order in await self._gw.get_open_orders():
-            if order.order_id in known or (
-                order.client_order_id and order.client_order_id in known
+            if (
+                order.order_id in known
+                or (order.client_order_id and order.client_order_id in known)
+                or self._is_bot_client_order(order.client_order_id)
             ):
                 continue
             await self._handler.handle_external_order(order)
             result.external_orders.append(order.order_id)
+
+    @staticmethod
+    def _is_bot_client_order(client_order_id: str | None) -> bool:
+        return bool(
+            client_order_id
+            and client_order_id.startswith(_BOT_CLIENT_ORDER_PREFIXES)
+        )
 
     def next_interval_sec(self) -> int:
         """Cadence for the reconciliation loop (impl doc §4.2)."""

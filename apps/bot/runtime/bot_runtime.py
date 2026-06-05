@@ -184,6 +184,8 @@ class BotRuntime:
                 self.config,
                 trade_logger=self._trade_logger,
                 order_sink=self._register_order,
+                pending_order_sink=self.runtime_state.reserve_order,
+                pending_order_clear_sink=self.runtime_state.clear_order_reservation,
             )
             self._protection = PositionProtectionManager(
                 self._gateway, self._order_manager, self._event_bus, self.config,
@@ -292,6 +294,7 @@ class BotRuntime:
         key = order.client_order_id or order.order_id
         if key:
             self.runtime_state.orders[key] = order
+            self.runtime_state.clear_order_reservation(order.client_order_id)
 
     async def run(self) -> None:
         self._loop = asyncio.get_running_loop()

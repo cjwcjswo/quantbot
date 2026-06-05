@@ -219,6 +219,7 @@ async def test_live_entry_protected_then_active(config, events):
     pos = await service.evaluate_entry(**_entry_kwargs())
     assert pos is not None
     assert pos.status == PositionStatus.ACTIVE
+    assert service._state.get_position("BTCUSDT") is pos
     assert gw.leverage.get("BTCUSDT") is not None  # leverage was set before entry
     from packages.core.events import BotEventType
     assert BotEventType.TPSL_VERIFIED in events.types()
@@ -238,6 +239,7 @@ async def test_live_entry_blocked_when_tpsl_fails(config, events):
     )
     pos = await service.evaluate_entry(**_entry_kwargs())
     assert pos is None  # never became ACTIVE
+    assert service._state.get_position("BTCUSDT").status == PositionStatus.CLOSED
     from packages.core.events import BotEventType
     assert BotEventType.EMERGENCY_TPSL_FAILED in events.types()
 
