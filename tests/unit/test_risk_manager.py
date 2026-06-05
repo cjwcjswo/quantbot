@@ -42,6 +42,19 @@ def test_happy_path_approved(config):
     assert d.leverage >= Decimal("1")
 
 
+def test_tpsl_prices_are_rounded_to_tick(config):
+    d = _approve(
+        config,
+        meta=symbol_meta(tick="0.0001", step="0.1", min_qty="0.1"),
+        atr="0.0003473864836708189304168911",
+        entry="0.1597",
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("0.1594")
+    assert d.take_profit_price == Decimal("0.1603")
+
+
 def test_stop_too_tight(config):
     d = _approve(config, decision=_decision(stop_atr="0.3"))
     assert not d.approved and d.reason == "STOP_TOO_TIGHT"

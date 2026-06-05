@@ -21,7 +21,13 @@ from decimal import Decimal
 from packages.config.settings import AppConfig
 from packages.core.enums import EntryMode, OrderStatus, OrderType, Side, TimeInForce
 from packages.core.errors import OrderTimeoutError
-from packages.core.models import ExchangeOrder, ExchangeOrderResult, Order, OrderRequest
+from packages.core.models import (
+    ExchangeOrder,
+    ExchangeOrderResult,
+    Order,
+    OrderRequest,
+    SymbolMeta,
+)
 from packages.exchange import ExchangeGateway
 from packages.execution.order_policy import (
     aggressive_limit_price,
@@ -29,6 +35,7 @@ from packages.execution.order_policy import (
     entry_order_type,
 )
 from packages.entry.entry_timing_engine import EntryDecision  # noqa: F401 (typing)
+from packages.universe import round_qty_down
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +81,7 @@ class OrderManager:
         self._order_sink = order_sink
         self._pending_order_sink = pending_order_sink
         self._pending_order_clear_sink = pending_order_clear_sink
+        self._symbol_meta: dict[str, SymbolMeta] | None = None
 
     # ------------------------------------------------------------------ #
     @staticmethod
@@ -205,7 +213,11 @@ class OrderManager:
             )
         )
         filled = res.filled_qty
-        status = "FILLED" if filled >= qty else ("PARTIAL" if filled > 0 else "NO_FILL")
+        status = (
+            "FILLED"
+            if res.status == OrderStatus.FILLED or filled >= qty
+            else ("PARTIAL" if filled > 0 else "NO_FILL")
+        )
         return OrderOutcome(status, filled, res.avg_fill_price, res.order_id, cid)
 
     async def place_partial_exit(
@@ -228,7 +240,7 @@ class OrderManager:
                     time_in_force=TimeInForce.GTC, client_order_id=cid,
                 )
             )
-            if res.filled_qty >= qty:
+            if res.status == OrderStatus.FILLED or res.filled_qty >= qty:
                 return OrderOutcome("FILLED", res.filled_qty, res.avg_fill_price, res.order_id, cid)
             await self._safe_cancel(symbol, res.order_id, cid)
             remainder = qty - res.filled_qty
@@ -246,6 +258,15 @@ class OrderManager:
     async def _place(
         self, request: OrderRequest, entry_mode: EntryMode | None = None
     ) -> ExchangeOrderResult:
+        request = await self._normalize_request_qty(request)
+        if request.qty <= 0:
+            return ExchangeOrderResult(
+                symbol=request.symbol,
+                order_id="",
+                client_order_id=request.client_order_id,
+                status=OrderStatus.REJECTED,
+                filled_qty=Decimal(0),
+            )
         self._reserve_order(request)
         try:
             placed = await self._gw.place_order(request)
@@ -388,3 +409,30 @@ class OrderManager:
             self._order_sink(order)
         if persist and self._logger is not None:
             await self._logger.log_order(order, mode="LIVE")
+
+    async def _normalize_request_qty(self, request: OrderRequest) -> OrderRequest:
+        meta = await self._meta_for(request.symbol)
+        if meta is None:
+            return request
+        qty = round_qty_down(request.qty, meta.qty_step)
+        if qty == request.qty:
+            return request
+        logger.info(
+            "rounded order qty for %s from %s to %s using step %s",
+            request.symbol,
+            request.qty,
+            qty,
+            meta.qty_step,
+        )
+        return request.model_copy(update={"qty": qty})
+
+    async def _meta_for(self, symbol: str) -> SymbolMeta | None:
+        if self._symbol_meta is None:
+            try:
+                instruments = await self._gw.load_instruments()
+            except Exception:  # noqa: BLE001 - final exchange validation remains
+                logger.debug("instrument metadata load failed")
+                self._symbol_meta = {}
+            else:
+                self._symbol_meta = {m.symbol: m for m in instruments}
+        return self._symbol_meta.get(symbol)

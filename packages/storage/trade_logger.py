@@ -258,7 +258,8 @@ class TradeLogger:
                 exit_price=exit_price, realized_pnl=realized_pnl, exit_reason=exit_reason,
                 strategy_id=_max_text(strategy_id, 64), entry_mode=entry_mode, mode=mode,
                 leverage=leverage, fees=fees, funding_fees=funding_fees,
-                gross_pnl=gross_pnl, net_pnl=net_pnl, r_multiple=r_multiple,
+                gross_pnl=gross_pnl, net_pnl=net_pnl,
+                r_multiple=_max_text(r_multiple, 16),
                 opened_at=opened_at, closed_at=closed_at,
             )
         )

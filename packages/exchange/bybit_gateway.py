@@ -69,6 +69,11 @@ def _is_order_missing_error(exc: Exception) -> bool:
     return "ErrCode: 110001" in text or "retCode=110001" in text
 
 
+def _is_leverage_unchanged_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "ErrCode: 110043" in text or "retCode=110043" in text
+
+
 class BybitExchangeGateway:
     """Concrete :class:`~packages.exchange.gateway.ExchangeGateway` for Bybit."""
 
@@ -466,13 +471,27 @@ class BybitExchangeGateway:
 
     async def set_leverage(self, symbol: str, leverage: Decimal) -> None:
         lev = str(leverage)
-        await self._rest(
-            self._http.set_leverage,
-            category=self._category,
-            symbol=symbol,
-            buyLeverage=lev,
-            sellLeverage=lev,
+        params = {
+            "category": self._category,
+            "symbol": symbol,
+            "buyLeverage": lev,
+            "sellLeverage": lev,
+        }
+
+        async def call():
+            async with self._rest_limiter:
+                try:
+                    return await asyncio.to_thread(self._http.set_leverage, **params)
+                except Exception as exc:
+                    if _is_leverage_unchanged_error(exc):
+                        logger.info("set_leverage already %s for %s", lev, symbol)
+                        return {"retCode": 0, "result": {}}
+                    raise
+
+        resp = await with_backoff(
+            call, base_sec=self._backoff_base, max_sec=self._backoff_max
         )
+        self._unwrap(resp)
 
     def _map_order(self, item: dict) -> ExchangeOrder:
         return ExchangeOrder(

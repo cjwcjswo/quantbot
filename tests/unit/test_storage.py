@@ -19,6 +19,7 @@ from packages.storage import (
     FillRow,
     PositionRow,
     SignalRow,
+    TradeRow,
     TradeLogger,
 )
 
@@ -71,3 +72,20 @@ async def test_log_fill_and_position(session_factory):
     assert prow.qty == "2"
     assert prow.avg_entry_price == "100.5"
     assert prow.entry_mode == "BREAKOUT_CONFIRM"
+
+
+async def test_log_trade_truncates_long_r_multiple(session_factory):
+    tl = TradeLogger(session_factory)
+    await tl.log_trade(
+        symbol="OPUSDT",
+        side="SHORT",
+        qty="920.7",
+        entry_price="0.10251",
+        exit_price="0.10247777",
+        realized_pnl="0.029674161",
+        exit_reason="SCENARIO_INVALID",
+        r_multiple="0.08930531871733813705807884296",
+    )
+    async with session_factory() as s:
+        row = (await s.execute(select(TradeRow))).scalar_one()
+    assert row.r_multiple == "0.08930531871733"

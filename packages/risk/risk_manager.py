@@ -19,7 +19,7 @@ from packages.entry.entry_timing_engine import EntryDecision
 from packages.risk.leverage import choose_leverage, max_leverage
 from packages.risk.levels import estimate_liq_price, stop_loss_price, take_profit_price
 from packages.risk.position_sizing import compute_size
-from packages.universe import meets_min_notional, meets_min_qty
+from packages.universe import meets_min_notional, meets_min_qty, round_price_to_tick
 
 
 @dataclass
@@ -78,7 +78,10 @@ class RiskManager:
         if atr <= 0 or entry_price <= 0:
             return _reject("INVALID_MARKET_DATA")
 
-        stop = stop_loss_price(entry_price, atr, decision.stop_atr, side)
+        stop = round_price_to_tick(
+            stop_loss_price(entry_price, atr, decision.stop_atr, side),
+            symbol_meta.tick_size,
+        )
 
         # Stop Distance Guard (§13.2)
         stop_distance_atr = abs(entry_price - stop) / atr
@@ -161,8 +164,14 @@ class RiskManager:
         ):
             return _reject("LIQ_INSIDE_STOP")
 
-        take_profit = take_profit_price(
-            entry_price, stop, side, Decimal(str(self.cfg.tpsl.initial_take_profit_r))
+        take_profit = round_price_to_tick(
+            take_profit_price(
+                entry_price,
+                stop,
+                side,
+                Decimal(str(self.cfg.tpsl.initial_take_profit_r)),
+            ),
+            symbol_meta.tick_size,
         )
 
         return RiskDecision(

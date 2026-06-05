@@ -172,3 +172,30 @@ async def test_bybit_cancel_order_treats_missing_order_as_done():
     await gw.cancel_order("BTCUSDT", "missing", None)
 
     assert calls == 1
+
+
+async def test_bybit_set_leverage_treats_unchanged_as_done():
+    class Limiter:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    calls = 0
+
+    def set_leverage(**_params):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("leverage not modified (ErrCode: 110043)")
+
+    gw = BybitExchangeGateway.__new__(BybitExchangeGateway)
+    gw._category = "linear"
+    gw._rest_limiter = Limiter()
+    gw._backoff_base = 0
+    gw._backoff_max = 0
+    gw._http = SimpleNamespace(set_leverage=set_leverage)
+
+    await gw.set_leverage("AAVEUSDT", Decimal("2"))
+
+    assert calls == 1

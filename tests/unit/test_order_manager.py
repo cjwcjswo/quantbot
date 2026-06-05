@@ -10,6 +10,7 @@ from packages.core.errors import OrderError
 from packages.core.models import ExchangeOrder
 from packages.execution import OrderManager, assert_live_new_entry_allowed
 from packages.storage import OrderRow, TradeLogger
+from tests.fakes.builders import symbol_meta
 from tests.fakes import FakeGateway
 
 _BID = Decimal("99.95")
@@ -164,6 +165,17 @@ async def test_reduce_only_exit(config):
     assert out.status == "FILLED"
     assert gw.placed_orders[-1].reduce_only is True
     assert gw.placed_orders[-1].order_type == OrderType.MARKET
+
+
+async def test_exit_qty_is_rounded_to_exchange_step(config):
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="OPUSDT", step="0.1", min_qty="0.1")])
+    om = OrderManager(gw, config)
+
+    out = await om.place_exit(symbol="OPUSDT", side=Side.BUY, qty=Decimal("460.35"))
+
+    assert out.status == "FILLED"
+    assert gw.placed_orders[-1].qty == Decimal("460.3")
 
 
 async def test_order_manager_logs_orders(config, session_factory):

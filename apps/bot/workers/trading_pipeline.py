@@ -529,31 +529,42 @@ class TradingService:
             best_bid=best_bid, best_ask=best_ask,
             prefer_limit=prefer_limit, limit_price=limit_price,
         )
+        filled_qty = result.fill_qty
+        if filled_qty <= 0:
+            return
         direction = Decimal(1) if pos.side == PositionSide.LONG else Decimal(-1)
         realized = (
             result.realized
             if result.realized is not None
-            else (result.fill_price - pos.avg_entry_price) * qty * direction
+            else (result.fill_price - pos.avg_entry_price) * filled_qty * direction
         )
         pos.realized_pnl += realized
         pos.fees_paid += result.fee
-        pos.qty -= qty
+        pos.qty -= filled_qty
         if full or pos.qty <= 0:
             pos.status = PositionStatus.CLOSED
             pos.closed_at = datetime.now(timezone.utc)
             pos.exit_reason = reason
         if self._logger is not None:
             await self._logger.log_fill(
-                self._as_fill_raw(pos.symbol, _exit_side(pos), result.fill_price, qty, result.fee),
+                self._as_fill_raw(
+                    pos.symbol, _exit_side(pos), result.fill_price, filled_qty, result.fee
+                ),
                 realized_pnl=str(realized), mode=self.mode.value,
             )
             await self._logger.log_position(pos, mode=self.mode.value)
             if pos.status == PositionStatus.CLOSED:
                 r_mult = None
-                if pos.initial_risk_per_unit and pos.initial_risk_per_unit > 0 and qty > 0:
-                    r_mult = str(pos.realized_pnl / (pos.initial_risk_per_unit * qty))
+                if (
+                    pos.initial_risk_per_unit
+                    and pos.initial_risk_per_unit > 0
+                    and filled_qty > 0
+                ):
+                    r_mult = str(
+                        pos.realized_pnl / (pos.initial_risk_per_unit * filled_qty)
+                    )
                 await self._logger.log_trade(
-                    symbol=pos.symbol, side=pos.side.value, qty=str(qty),
+                    symbol=pos.symbol, side=pos.side.value, qty=str(filled_qty),
                     entry_price=str(pos.avg_entry_price), exit_price=str(result.fill_price),
                     realized_pnl=str(pos.realized_pnl),
                     exit_reason=reason.value if reason else None,
