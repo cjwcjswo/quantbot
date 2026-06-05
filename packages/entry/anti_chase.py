@@ -24,7 +24,7 @@ class AntiChase:
         self.max_dist_atr = Decimal(str(ac.max_distance_from_ema20_atr))
         self.max_recent3_atr = Decimal(str(ac.max_recent_3_candle_move_atr))
         self.max_single_atr = Decimal(str(ac.max_single_candle_move_atr))
-        self.exhaustion_vr = Decimal(str(config.volume.max_exhaustion_volume_ratio))
+        self.exhaustion_vr = Decimal(str(ac.exhaustion_volume_ratio))
         self.long_min_cpr = Decimal(
             str(config.candle_quality.long_min_close_position_in_range)
         )

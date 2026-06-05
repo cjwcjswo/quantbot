@@ -40,6 +40,8 @@ async def test_protect_success_makes_active(config, events):
     result = await ppm.protect(pos)
     assert result.protected
     assert pos.status == PositionStatus.ACTIVE
+    assert gw.trading_stops[-1].take_profit is None
+    assert gw.trading_stops[-1].stop_loss == Decimal("99")
     assert BotEventType.TPSL_SET in events.types()
     assert BotEventType.TPSL_VERIFIED in events.types()
 
@@ -63,7 +65,7 @@ async def test_protect_verify_fail_emergency_close_order_locked(config, events):
 
 async def test_protect_rejects_mismatched_tpsl_values(config, events):
     gw = FakeGateway()
-    gw.tpsl_override_on_set = (Decimal("103"), Decimal("99"))
+    gw.tpsl_override_on_set = (None, Decimal("98"))
     gw.fill_ratio = Decimal("1")
     ppm = _ppm(config, gw, events)
     pos = _position()
@@ -83,3 +85,19 @@ async def test_protect_emergency_close_fail_emergency_stop(config, events):
     assert not result.protected
     assert result.reason == "EMERGENCY_STOP"
     assert not result.closed
+
+
+async def test_trailing_sl_sync_rate_limited(config, events):
+    gw = FakeGateway()
+    ppm = _ppm(config, gw, events)
+    pos = _position()
+    pos.status = PositionStatus.ACTIVE
+    pos.stop_loss_price = Decimal("100")
+
+    assert await ppm.sync_stop_loss(pos) is True
+    assert gw.trading_stops[-1].take_profit is None
+    assert gw.trading_stops[-1].stop_loss == Decimal("100")
+
+    pos.stop_loss_price = Decimal("101")
+    assert await ppm.sync_stop_loss(pos) is False
+    assert gw.trading_stops[-1].stop_loss == Decimal("100")

@@ -1,11 +1,12 @@
-"""PositionProtectionManager: LIVE TP/SL set + verify + emergency close (impl doc §5).
+"""PositionProtectionManager: LIVE exchange protection verify + emergency close.
 
-After a LIVE entry fills, the position is NOT ACTIVE until exchange TP/SL is set
-and verified (impl doc §5.1, §14.1):
+After a LIVE entry fills, the position is NOT ACTIVE until configured exchange
+protection is set and verified. The current strategy requires exchange SL and
+leaves exchange TP disabled so bot-managed partial TP/trailing can run.
 
 ```
 set Trading Stop
--> re-read TP/SL (retry up to N times at interval)
+-> re-read configured protection (retry up to N times at interval)
 -> protected => position ACTIVE
 -> not protected => reduce-only MARKET emergency close
      close ok   => ORDER_LOCKED
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from decimal import Decimal
@@ -59,6 +61,7 @@ class PositionProtectionManager:
         self.cfg = config
         self._sleep = sleep
         self._logger = trade_logger
+        self._last_sl_update_at: dict[str, float] = {}
 
     async def _confirm_position(self, position: Position) -> None:
         """Confirm the exchange position before setting TP/SL (impl doc §5.2 step 3)."""
@@ -80,7 +83,8 @@ class PositionProtectionManager:
         pp = self.cfg.position_protection
         tpsl = self.cfg.tpsl
         await self._confirm_position(position)
-        tp, sl = position.take_profit_price, position.stop_loss_price
+        tp = position.take_profit_price if tpsl.use_exchange_tp else None
+        sl = position.stop_loss_price if tpsl.use_exchange_sl else None
 
         await self._gw.set_trading_stop(
             TradingStopRequest(
@@ -123,13 +127,6 @@ class PositionProtectionManager:
         return False
 
     def _matches_requested_tpsl(self, position: Position, state) -> bool:
-        if (
-            not state.is_protected
-            or position.take_profit_price is None
-            or position.stop_loss_price is None
-        ):
-            return False
-
         tolerance = Decimal(str(self.cfg.position_protection.tpsl_verify_tolerance_percent))
 
         def close_enough(actual: Decimal | None, expected: Decimal) -> bool:
@@ -138,9 +135,47 @@ class PositionProtectionManager:
             allowed = abs(expected) * tolerance / Decimal("100")
             return abs(actual - expected) <= allowed
 
-        return close_enough(
-            state.take_profit, position.take_profit_price
-        ) and close_enough(state.stop_loss, position.stop_loss_price)
+        tpsl = self.cfg.tpsl
+        if tpsl.use_exchange_sl:
+            if position.stop_loss_price is None:
+                return False
+            if not close_enough(state.stop_loss, position.stop_loss_price):
+                return False
+        if tpsl.use_exchange_tp:
+            if position.take_profit_price is None:
+                return False
+            if not close_enough(state.take_profit, position.take_profit_price):
+                return False
+        return tpsl.use_exchange_sl or tpsl.use_exchange_tp
+
+    async def sync_stop_loss(self, position: Position) -> bool:
+        """Sync a ratcheted internal trailing SL to the exchange at a safe cadence."""
+        if (
+            not self.cfg.position.sync_exchange_sl_with_trailing
+            or not self.cfg.tpsl.use_exchange_sl
+            or position.stop_loss_price is None
+        ):
+            return False
+        now = time.monotonic()
+        last = self._last_sl_update_at.get(position.symbol, 0.0)
+        interval = self.cfg.position.min_exchange_sl_update_interval_sec
+        if now - last < interval:
+            return False
+        await self._gw.set_trading_stop(
+            TradingStopRequest(
+                symbol=position.symbol,
+                stop_loss=position.stop_loss_price,
+                sl_trigger_by=TriggerBy(self.cfg.tpsl.sl_trigger_by),
+                tpsl_mode=self.cfg.tpsl.tpsl_mode,
+            )
+        )
+        self._last_sl_update_at[position.symbol] = now
+        if self._logger is not None:
+            await self._logger.log_protection(
+                position.symbol, "TRAILING_SL_SYNCED",
+                sl=position.stop_loss_price,
+            )
+        return True
 
     async def _emergency_close(self, position: Position) -> ProtectionResult:
         """TP/SL missing => flatten with reduce-only MARKET (impl doc §5.5, §17.3)."""

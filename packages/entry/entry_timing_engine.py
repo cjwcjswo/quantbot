@@ -61,17 +61,22 @@ class EntryTimingEngine:
             tolerance_atr=Decimal(str(config.entry.retest_confirm.retest_tolerance_atr)),
             max_wait_candles=config.entry.retest_confirm.max_wait_candles,
         )
+        self.last_no_entry_reason: dict | None = None
 
     # ------------------------------------------------------------------ #
     def evaluate(self, ctx: EntryContext) -> EntryDecision | None:
+        self.last_no_entry_reason = None
         if ctx.direction not in (SignalDirection.LONG, SignalDirection.SHORT):
+            self._record_no_entry("entry_timing", "TREND_CONDITION_FAILED")
             return None
         if not ctx.candles_1m:
+            self._record_no_entry("entry_timing", "NO_CANDLES")
             return None
         last = ctx.candles_1m[-1]
         m = metrics_of(last)
         atr1 = ctx.snapshot_1m.atr14
         if not m.valid or atr1 is None or atr1 <= 0:
+            self._record_no_entry("entry_timing", "INVALID_CANDLE_OR_ATR")
             return None
 
         self.retests.on_new_bar(ctx.symbol, last)
@@ -79,28 +84,75 @@ class EntryTimingEngine:
         is_long = ctx.direction == SignalDirection.LONG
 
         if self._broke_out(ctx, last, atr1, is_long):
-            if modes.breakout_confirm and self._healthy_breakout(ctx, m, is_long):
+            quality_reason = self._breakout_quality_reason(ctx, m, is_long)
+            if modes.breakout_confirm and quality_reason is None:
                 return self._breakout_decision(ctx)
             # Exhaustion / unhealthy => register retest pending (impl doc §10.4).
             if modes.retest_confirm:
                 level = ctx.box_high if is_long else ctx.box_low
                 self.retests.register(ctx.symbol, ctx.direction, level)
+            reason_code = (
+                "BREAKOUT_EXHAUSTION"
+                if quality_reason == "VOLUME_EXHAUSTION"
+                else "BREAKOUT_NOT_HEALTHY"
+            )
+            anti_chase_reason = self._anti_chase_detail(quality_reason)
+            self._record_no_entry(
+                "entry_timing",
+                reason_code,
+                entry_mode_candidate=EntryMode.BREAKOUT_CONFIRM.value,
+                anti_chase_reason=anti_chase_reason,
+                breakout_quality_reason=quality_reason,
+                retest_pending_status="REGISTERED" if modes.retest_confirm else "DISABLED",
+            )
             return None
 
         # Price still inside the box: try retest, then scout.
         if modes.retest_confirm:
             pending = self.retests.get(ctx.symbol)
-            if (
-                pending is not None
-                and pending.direction == ctx.direction
-                and self.retests.confirm(pending, last, m, atr1)
-            ):
-                self.retests.drop(ctx.symbol)
-                return self._retest_decision(ctx)
+            if pending is not None and pending.direction == ctx.direction:
+                if self.retests.confirm(pending, last, m, atr1):
+                    self.retests.drop(ctx.symbol)
+                    return self._retest_decision(ctx)
+                self._record_no_entry(
+                    "entry_timing",
+                    "RETEST_TOO_FAR_FROM_LEVEL",
+                    entry_mode_candidate=EntryMode.RETEST_CONFIRM.value,
+                    retest_pending_status=f"WAITING:{pending.bars_waited}",
+                )
 
         if modes.pre_breakout_scout:
-            return self._scout_decision(ctx, last, m, atr1, is_long)
+            decision = self._scout_decision(ctx, last, m, atr1, is_long)
+            if decision is not None:
+                return decision
 
+        if self.last_no_entry_reason is None:
+            self._record_no_entry("entry_timing", "SCOUT_CONDITIONS_FAILED")
+        return None
+
+    def _record_no_entry(
+        self,
+        failed_stage: str,
+        reason_code: str,
+        **extra,
+    ) -> None:
+        anti_chase_reason = self._anti_chase_detail(reason_code)
+        if anti_chase_reason is not None:
+            reason_code = reason_code.split(":", 1)[0]
+            extra.setdefault("anti_chase_reason", anti_chase_reason)
+        self.last_no_entry_reason = {
+            "failed_stage": failed_stage,
+            "reason_code": reason_code,
+            **{k: v for k, v in extra.items() if v is not None},
+        }
+
+    @staticmethod
+    def _anti_chase_detail(reason: str | None) -> str | None:
+        if reason is None or ":" not in reason:
+            return None
+        prefix, detail = reason.split(":", 1)
+        if prefix in {"ANTI_CHASE_LONG", "ANTI_CHASE_SHORT"}:
+            return detail
         return None
 
     # ------------------------------------------------------------------ #
@@ -114,33 +166,40 @@ class EntryTimingEngine:
             return last.close > ctx.box_high + margin * atr1
         return last.close < ctx.box_low - margin * atr1
 
-    def _healthy_breakout(
+    def _breakout_quality_reason(
         self, ctx: EntryContext, m: CandleMetrics, is_long: bool
-    ) -> bool:
+    ) -> str | None:
         vol = ctx.snapshot_1m.volume_ratio
         if vol is None:
-            return False
+            return "VOLUME_MISSING"
         cq = self.cfg.candle_quality
         min_vr = Decimal(str(self.cfg.volume.min_breakout_volume_ratio))
         max_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
-        if not (min_vr <= vol < max_vr):
-            return False
+        if vol < min_vr:
+            return "VOLUME_TOO_LOW"
+        if vol >= max_vr:
+            return "VOLUME_EXHAUSTION"
         if m.body_ratio < Decimal(str(cq.min_body_ratio_for_breakout)):
-            return False
+            return "BODY_TOO_SMALL"
         opp_wick = Decimal(str(cq.max_opposite_wick_ratio_for_breakout))
         if is_long:
             if m.upper_wick_ratio > opp_wick:
-                return False
+                return "OPPOSITE_WICK_TOO_LARGE"
             if m.close_position_in_range < Decimal(str(cq.long_min_close_position_in_range)):
-                return False
-            return self.anti_chase.block_long(
-                ctx.snapshot_1m, ctx.candles_1m, m
-            ) is None
+                return "WEAK_CLOSE_IN_RANGE"
+            anti = self.anti_chase.block_long(ctx.snapshot_1m, ctx.candles_1m, m)
+            return f"ANTI_CHASE_LONG:{anti}" if anti else None
         if m.lower_wick_ratio > opp_wick:
-            return False
+            return "OPPOSITE_WICK_TOO_LARGE"
         if m.close_position_in_range > Decimal(str(cq.short_max_close_position_in_range)):
-            return False
-        return self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m) is None
+            return "WEAK_CLOSE_IN_RANGE"
+        anti = self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m)
+        return f"ANTI_CHASE_SHORT:{anti}" if anti else None
+
+    def _healthy_breakout(
+        self, ctx: EntryContext, m: CandleMetrics, is_long: bool
+    ) -> bool:
+        return self._breakout_quality_reason(ctx, m, is_long) is None
 
     # ------------------------------------------------------------------ #
     # decision builders
@@ -180,10 +239,21 @@ class EntryTimingEngine:
         atr1: Decimal,
         is_long: bool,
     ) -> EntryDecision | None:
-        if not self._scout_conditions(ctx, last, atr1, is_long):
+        reason = self._scout_condition_reason(ctx, last, atr1, is_long)
+        if reason is not None:
+            self._record_no_entry(
+                "entry_timing",
+                reason,
+                entry_mode_candidate=EntryMode.PRE_BREAKOUT_SCOUT.value,
+            )
             return None
         score = self._scout_score(ctx, last, atr1, is_long)
         if score < Decimal(str(self.cfg.entry.pre_breakout.min_score)):
+            self._record_no_entry(
+                "entry_timing",
+                "SCOUT_SCORE_TOO_LOW",
+                entry_mode_candidate=EntryMode.PRE_BREAKOUT_SCOUT.value,
+            )
             return None
         e = self.cfg.entry.pre_breakout
         return EntryDecision(
@@ -196,38 +266,45 @@ class EntryTimingEngine:
             reason="pre-breakout scout",
         )
 
-    def _scout_conditions(
+    def _scout_condition_reason(
         self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool
-    ) -> bool:
+    ) -> str | None:
         rsi = ctx.snapshot_1m.rsi14
         vol = ctx.snapshot_1m.volume_ratio
         if rsi is None or vol is None:
-            return False
+            return "SCOUT_DATA_MISSING"
         atr20 = avg_true_range(ctx.candles_1m, 20)
         atr100 = avg_true_range(ctx.candles_1m, 100)
         if atr20 is None or atr100 is None or atr20 >= atr100:  # compression required
-            return False
+            return "SCOUT_NO_COMPRESSION"
         scout = self.cfg.entry.pre_breakout
         exhaustion_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
         if not (Decimal(str(scout.min_volume_ratio)) <= vol < exhaustion_vr):
-            return False
+            return "VOLUME_TOO_LOW" if vol < Decimal(str(scout.min_volume_ratio)) else "BREAKOUT_EXHAUSTION"
         dist_limit = Decimal(str(scout.max_distance_to_box_atr)) * atr1
         m = metrics_of(last)
         if is_long:
             if not (ctx.box_high - last.close <= dist_limit and last.close <= ctx.box_high):
-                return False
+                return "SCOUT_TOO_FAR_FROM_BOX"
             if count_rising_lows(ctx.candles_1m) < 2:
-                return False
+                return "SCOUT_STRUCTURE_WEAK"
             if not (Decimal(str(scout.long_rsi_min)) <= rsi <= Decimal(str(scout.long_rsi_max))):
-                return False
-            return self.anti_chase.block_long(ctx.snapshot_1m, ctx.candles_1m, m) is None
+                return "TREND_CONDITION_FAILED"
+            anti = self.anti_chase.block_long(ctx.snapshot_1m, ctx.candles_1m, m)
+            return f"ANTI_CHASE_LONG:{anti}" if anti else None
         if not (last.close - ctx.box_low <= dist_limit and last.close >= ctx.box_low):
-            return False
+            return "SCOUT_TOO_FAR_FROM_BOX"
         if count_falling_highs(ctx.candles_1m) < 2:
-            return False
+            return "SCOUT_STRUCTURE_WEAK"
         if not (Decimal(str(scout.short_rsi_min)) <= rsi <= Decimal(str(scout.short_rsi_max))):
-            return False
-        return self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m) is None
+            return "TREND_CONDITION_FAILED"
+        anti = self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m)
+        return f"ANTI_CHASE_SHORT:{anti}" if anti else None
+
+    def _scout_conditions(
+        self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool
+    ) -> bool:
+        return self._scout_condition_reason(ctx, last, atr1, is_long) is None
 
     def _scout_score(
         self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool

@@ -142,6 +142,27 @@ async def test_blocked_by_pre_order_depth(config):
     assert await service.evaluate_entry(**_entry_kwargs(market)) is None
 
 
+async def test_no_entry_reason_logged_for_pre_order_depth(config, events):
+    clock = ClockSyncGuard(block_trading_if_drift_ms_above=1000)
+    clock.update(server_time_ms=0, local_time_ms=0)
+    guards = GuardSet(pre_order_check=PreOrderCheck(config), clock_guard=clock)
+    service = await _paper_service(config, guards=guards, events=events)
+    thin = OrderBook(
+        symbol="BTCUSDT",
+        bids=(OrderBookLevel(price=Decimal("100.98"), size=Decimal("1")),),
+        asks=(OrderBookLevel(price=Decimal("101.0"), size=Decimal("1")),),
+    )
+    market = MarketContext(orderbook=thin, symbol_status="Trading")
+
+    assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+    from packages.core.events import BotEventType
+    no_entry = events.of_type(BotEventType.NO_ENTRY_REASON)
+    assert len(no_entry) == 1
+    assert no_entry[0].data["reason_code"] == "PRE_ORDER_INSUFFICIENT_DEPTH"
+    assert no_entry[0].data["entry_mode_candidate"] == "BREAKOUT_CONFIRM"
+
+
 async def test_orderbook_loaded_only_after_entry_candidate(config):
     clock = ClockSyncGuard(block_trading_if_drift_ms_above=1000)
     clock.update(server_time_ms=0, local_time_ms=0)

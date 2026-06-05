@@ -45,6 +45,7 @@ class FakeGateway:
         # call log for assertions
         self.ticker_calls: int = 0
         self.placed_orders: list[OrderRequest] = []
+        self.trading_stops: list = []
         self.cancelled: list[tuple[str, str | None, str | None]] = []
         self.kline_calls: list[tuple[str, str, int]] = []
         self.orderbook_calls: list[tuple[str, int]] = []
@@ -220,6 +221,7 @@ class FakeGateway:
     async def set_trading_stop(self, request):  # TradingStopRequest
         from packages.core.models import TradingStopResult
 
+        self.trading_stops.append(request)
         if self.disable_tpsl:
             # Simulate the exchange not registering TP/SL (verify will fail).
             return TradingStopResult(symbol=request.symbol, success=True)

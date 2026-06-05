@@ -33,7 +33,7 @@ class BotSection(_Section):
     quote_coin: str = "USDT"
     start_state: BotState = BotState.STANDBY
     max_active_positions: int = 5
-    max_symbols_to_watch: int = 30
+    max_symbols_to_watch: int = 20
     heartbeat_interval_sec: int = 5
 
 
@@ -62,7 +62,7 @@ class UniverseSection(_Section):
 
 class ScannerSection(_Section):
     refresh_interval_sec: int = 300
-    max_candidates: int = 30
+    max_candidates: int = 20
     atr_prefilter_multiple: int = 3
     atr_refresh_budget: int = 30
     atr_cache_ttl_sec: int = 900
@@ -81,9 +81,9 @@ class TrendQualitySection(_Section):
     long_rsi_max_5m: float = 68
     short_rsi_min_5m: float = 32
     short_rsi_max_5m: float = 50
-    min_ema_gap_percent_15m: float = 0.15
-    min_ema20_slope_atr_15m: float = 0.05
-    min_close_distance_from_ema20_atr_15m: float = 0.10
+    min_ema_gap_percent_15m: float = 0.10
+    min_ema20_slope_atr_15m: float = 0.03
+    min_close_distance_from_ema20_atr_15m: float = 0.05
     score_gap_high_percent_15m: float = 0.30
     score_slope_high_atr_15m: float = 0.10
     score_volume_high_ratio_5m: float = 1.2
@@ -91,17 +91,17 @@ class TrendQualitySection(_Section):
 
 
 class VolumeSection(_Section):
-    min_setup_volume_ratio: float = 0.8
-    min_breakout_volume_ratio: float = 1.5
+    min_setup_volume_ratio: float = 0.6
+    min_breakout_volume_ratio: float = 1.3
     max_exhaustion_volume_ratio: float = 4.0
 
 
 class CandleQualitySection(_Section):
     max_rejection_wick_ratio: float = 0.45
-    max_opposite_wick_ratio_for_breakout: float = 0.35
-    min_body_ratio_for_breakout: float = 0.45
-    long_min_close_position_in_range: float = 0.75
-    short_max_close_position_in_range: float = 0.25
+    max_opposite_wick_ratio_for_breakout: float = 0.38
+    min_body_ratio_for_breakout: float = 0.40
+    long_min_close_position_in_range: float = 0.70
+    short_max_close_position_in_range: float = 0.30
 
 
 class EntryEnabledModes(_Section):
@@ -111,15 +111,15 @@ class EntryEnabledModes(_Section):
 
 
 class PreBreakoutEntry(_Section):
-    min_score: int = 8
+    min_score: int = 6
     position_fraction: float = 0.30
     stop_atr: float = 0.7
-    min_volume_ratio: float = 1.15
-    max_distance_to_box_atr: float = 0.35
-    long_rsi_min: float = 48
-    long_rsi_max: float = 62
-    short_rsi_min: float = 38
-    short_rsi_max: float = 52
+    min_volume_ratio: float = 0.9
+    max_distance_to_box_atr: float = 0.45
+    long_rsi_min: float = 46
+    long_rsi_max: float = 64
+    short_rsi_min: float = 36
+    short_rsi_max: float = 54
     score_gap_high_percent_15m: float = 0.30
     score_slope_high_atr_15m: float = 0.10
     score_long_rsi_center_min: float = 50
@@ -134,26 +134,27 @@ class PreBreakoutEntry(_Section):
 
 class BreakoutConfirmEntry(_Section):
     position_fraction: float = 0.30
-    volume_min_ratio: float = 1.5
+    volume_min_ratio: float = 1.3
     require_close_beyond_boundary: bool = True
-    close_beyond_boundary_atr: float = 0.05
+    close_beyond_boundary_atr: float = 0.03
     stop_atr: float = 1.0
 
 
 class RetestConfirmEntry(_Section):
     position_fraction: float = 0.40
-    retest_tolerance_atr: float = 0.25
-    max_wait_candles: int = 8
+    retest_tolerance_atr: float = 0.35
+    max_wait_candles: int = 10
     stop_atr: float = 1.0
 
 
 class AntiChaseEntry(_Section):
     enabled: bool = True
-    max_rsi_long: float = 68
-    min_rsi_short: float = 32
-    max_distance_from_ema20_atr: float = 1.2
-    max_recent_3_candle_move_atr: float = 1.5
-    max_single_candle_move_atr: float = 1.0
+    max_rsi_long: float = 70
+    min_rsi_short: float = 30
+    max_distance_from_ema20_atr: float = 1.5
+    max_recent_3_candle_move_atr: float = 2.0
+    max_single_candle_move_atr: float = 1.2
+    exhaustion_volume_ratio: float = 4.0
 
 
 class EntrySection(_Section):
@@ -213,6 +214,8 @@ class LiquidationGuardSection(_Section):
 
 class TpSlSection(_Section):
     initial_take_profit_r: float = 2.0
+    use_exchange_sl: bool = True
+    use_exchange_tp: bool = False
     use_exchange_tpsl: bool = True
     tp_trigger_by: str = "LastPrice"
     sl_trigger_by: str = "LastPrice"
@@ -238,6 +241,8 @@ class PositionSection(_Section):
     trailing_extended_after_r: float = 5.0
     trailing_extended_atr_multiplier: float = 2.5
     max_holding_minutes: int = 180
+    sync_exchange_sl_with_trailing: bool = True
+    min_exchange_sl_update_interval_sec: int = 5
 
 
 class StagnationScout(_Section):

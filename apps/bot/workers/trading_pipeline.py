@@ -216,6 +216,99 @@ class TradingService:
         if slip > max_slip:
             self._guards.kill_switch.record_slippage_breach()
 
+    async def _emit_no_entry(
+        self,
+        *,
+        symbol: str,
+        sig,
+        snapshots: dict[str, IndicatorSnapshot],
+        box_high: Decimal,
+        box_low: Decimal,
+        failed_stage: str,
+        reason_code: str,
+        entry_mode_candidate: str | None = None,
+        anti_chase_reason: str | None = None,
+        breakout_quality_reason: str | None = None,
+        retest_pending_status: str | None = None,
+        extra: dict | None = None,
+    ) -> None:
+        if sig is None:
+            return
+        s1 = snapshots.get("1")
+        s5 = snapshots.get("5")
+        s15 = snapshots.get("15")
+        atr1 = s1.atr14 if s1 is not None else None
+        if sig.direction == SignalDirection.LONG:
+            distance = (box_high - s1.close) / atr1 if s1 and atr1 and atr1 > 0 else None
+        else:
+            distance = (s1.close - box_low) / atr1 if s1 and atr1 and atr1 > 0 else None
+        ema_gap = None
+        if (
+            s15 is not None
+            and s15.ema20 is not None
+            and s15.ema50 is not None
+            and s15.close > 0
+        ):
+            ema_gap = abs(s15.ema20 - s15.ema50) / s15.close * Decimal(100)
+        pending = self._entry.retests.get(symbol)
+        data = {
+            "strategy_signal_side": sig.direction.value,
+            "signal_score": str(sig.score),
+            "failed_stage": failed_stage,
+            "reason_code": reason_code,
+            "entry_mode_candidate": entry_mode_candidate,
+            "rsi_1m": str(s1.rsi14) if s1 and s1.rsi14 is not None else None,
+            "rsi_5m": str(s5.rsi14) if s5 and s5.rsi14 is not None else None,
+            "volume_ratio_1m": str(s1.volume_ratio)
+            if s1 and s1.volume_ratio is not None
+            else None,
+            "volume_ratio_5m": str(s5.volume_ratio)
+            if s5 and s5.volume_ratio is not None
+            else None,
+            "atr_percent": str(s1.atr_percent)
+            if s1 and s1.atr_percent is not None
+            else None,
+            "ema_gap_15m": str(ema_gap) if ema_gap is not None else None,
+            "ema_slope_atr_15m": str(s15.ema20_slope_atr)
+            if s15 and s15.ema20_slope_atr is not None
+            else None,
+            "distance_to_box_atr": str(distance) if distance is not None else None,
+            "anti_chase_reason": anti_chase_reason,
+            "breakout_quality_reason": breakout_quality_reason,
+            "retest_pending_status": retest_pending_status
+            or (
+                f"WAITING:{pending.bars_waited}"
+                if pending is not None
+                else "NONE"
+            ),
+        }
+        if extra:
+            data.update(extra)
+        await self._emit(
+            BotEvent(
+                type=BotEventType.NO_ENTRY_REASON,
+                symbol=symbol,
+                message=reason_code,
+                data={k: v for k, v in data.items() if v is not None},
+            )
+        )
+
+    @staticmethod
+    def _gate_reason_code(reason: str) -> str:
+        if reason.startswith("DATA_QUALITY:"):
+            return reason.removeprefix("DATA_QUALITY:")
+        if reason.startswith("FUNDING:"):
+            return reason.removeprefix("FUNDING:")
+        if reason.startswith("PRE_ORDER:INSUFFICIENT_DEPTH"):
+            return "PRE_ORDER_INSUFFICIENT_DEPTH"
+        if reason.startswith("PRE_ORDER:"):
+            return reason.removeprefix("PRE_ORDER:")
+        if "COOLDOWN" in reason:
+            return "COOLDOWN_ACTIVE"
+        if reason.startswith("KILL_SWITCH:"):
+            return "KILL_SWITCH_ACTIVE"
+        return reason
+
     def _transition_after_protection_failure(self, reason: str) -> None:
         sm = self._guards.state_machine
         if sm is None:
@@ -233,6 +326,17 @@ class TradingService:
             sm.transition(target, reason="TP/SL protection failure")
         except Exception:
             sm.force(target, reason="TP/SL protection failure")
+
+    def _position_protection_status(self, pos: Position) -> str:
+        needs_sl = self.cfg.tpsl.use_exchange_sl
+        needs_tp = self.cfg.tpsl.use_exchange_tp
+        if not needs_sl and not needs_tp:
+            return "NOT_REQUIRED"
+        if needs_sl and pos.stop_loss_price is None:
+            return "TPSL_PENDING"
+        if needs_tp and pos.take_profit_price is None:
+            return "TPSL_PENDING"
+        return "TPSL_OK"
 
     # ------------------------------------------------------------------ #
     # guard gates
@@ -320,16 +424,25 @@ class TradingService:
         daily_loss_percent: Decimal = Decimal(0),
         consecutive_losses: int = 0,
     ) -> Position | None:
-        blocked = self._pre_gate(symbol, snapshots["1"], market)
-        if blocked is not None:
-            await self._emit(BotEvent(type=BotEventType.DATA_QUALITY_BLOCK,
-                                      symbol=symbol, message=blocked))
-            return None
-
         signals = self._signals.generate(symbol, snapshots)
         if not signals:
             return None
         sig = signals[0]
+
+        blocked = self._pre_gate(symbol, snapshots["1"], market)
+        if blocked is not None:
+            await self._emit_no_entry(
+                symbol=symbol,
+                sig=sig,
+                snapshots=snapshots,
+                box_high=box_high,
+                box_low=box_low,
+                failed_stage="pre_gate",
+                reason_code=self._gate_reason_code(blocked),
+            )
+            await self._emit(BotEvent(type=BotEventType.DATA_QUALITY_BLOCK,
+                                      symbol=symbol, message=blocked))
+            return None
 
         ctx = EntryContext(
             symbol=symbol, direction=sig.direction,
@@ -340,6 +453,23 @@ class TradingService:
         )
         decision = self._entry.evaluate(ctx)
         if decision is None:
+            reason = self._entry.last_no_entry_reason or {
+                "failed_stage": "entry_timing",
+                "reason_code": "NO_ENTRY_DECISION",
+            }
+            await self._emit_no_entry(
+                symbol=symbol,
+                sig=sig,
+                snapshots=snapshots,
+                box_high=box_high,
+                box_low=box_low,
+                failed_stage=reason.get("failed_stage", "entry_timing"),
+                reason_code=reason.get("reason_code", "NO_ENTRY_DECISION"),
+                entry_mode_candidate=reason.get("entry_mode_candidate"),
+                anti_chase_reason=reason.get("anti_chase_reason"),
+                breakout_quality_reason=reason.get("breakout_quality_reason"),
+                retest_pending_status=reason.get("retest_pending_status"),
+            )
             return None
 
         atr1 = snapshots["1"].atr14 or Decimal(0)
@@ -350,6 +480,17 @@ class TradingService:
         rd = self._risk.approve(decision, entry_price=entry_price, atr=atr1,
                                 symbol_meta=symbol_meta, ctx=risk_ctx)
         if not rd.approved:
+            await self._emit_no_entry(
+                symbol=symbol,
+                sig=sig,
+                snapshots=snapshots,
+                box_high=box_high,
+                box_low=box_low,
+                failed_stage="risk",
+                reason_code="RISK_REJECTED",
+                entry_mode_candidate=decision.entry_mode.value,
+                extra={"risk_reason": rd.reason},
+            )
             await self._emit(BotEvent(type=BotEventType.SIGNAL, symbol=symbol,
                                       message=f"rejected: {rd.reason}"))
             return None
@@ -364,6 +505,16 @@ class TradingService:
 
         post_blocked = self._post_gate(decision.entry_mode, rd.notional, market)
         if post_blocked is not None:
+            await self._emit_no_entry(
+                symbol=symbol,
+                sig=sig,
+                snapshots=snapshots,
+                box_high=box_high,
+                box_low=box_low,
+                failed_stage="post_gate",
+                reason_code=self._gate_reason_code(post_blocked),
+                entry_mode_candidate=decision.entry_mode.value,
+            )
             await self._emit(BotEvent(type=BotEventType.DATA_QUALITY_BLOCK,
                                       symbol=symbol, message=post_blocked))
             return None
@@ -374,6 +525,9 @@ class TradingService:
             best_bid=best_bid, best_ask=best_ask, entry_mode=decision.entry_mode,
         )
         if not opened.ok or opened.fill_qty <= 0:
+            if decision.entry_mode == EntryMode.BREAKOUT_CONFIRM:
+                level = box_high if sig.direction == SignalDirection.LONG else box_low
+                self._entry.retests.register(symbol, sig.direction, level)
             self._record_order_failure()
             await self._emit(BotEvent(type=BotEventType.ORDER_FAILED, symbol=symbol,
                                       message=opened.reason))
@@ -407,11 +561,7 @@ class TradingService:
             self._positions.mark_active_paper(pos)
 
         if self._logger is not None:
-            protection = (
-                "TPSL_OK"
-                if (pos.stop_loss_price and pos.take_profit_price)
-                else "TPSL_PENDING"
-            )
+            protection = self._position_protection_status(pos)
             await self._logger.log_signal(sig, entry_mode=decision.entry_mode.value)
             await self._logger.log_fill(
                 self._as_fill(opened, symbol, side), mode=self.mode.value
@@ -518,8 +668,14 @@ class TradingService:
                                   full=False, prefer_limit=False)
             elif action.type == PositionActionType.TRAIL_UPDATE:
                 pos.stop_loss_price = action.new_stop
+                if self.mode == BotMode.LIVE and self._protection is not None:
+                    await self._protection.sync_stop_loss(pos)
                 if self._logger is not None:
-                    await self._logger.log_position(pos, mode=self.mode.value)
+                    await self._logger.log_position(
+                        pos,
+                        mode=self.mode.value,
+                        protection_status=self._position_protection_status(pos),
+                    )
         return actions
 
     async def _close(self, pos, qty, reason, best_bid, best_ask, *, full, prefer_limit):

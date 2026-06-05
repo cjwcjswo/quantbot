@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from packages.storage.models import (
+    BotEventRow,
     DailyEventSummaryRow,
     DailyPnlRow,
     DailySymbolPnlRow,
@@ -19,16 +20,33 @@ async def test_daily_log(client, session_factory):
         session_factory,
         TradeRow(trade_id="t1", symbol="BTCUSDT", side="LONG", qty="0.01",
                  entry_price="65000", exit_price="67000", realized_pnl="20",
-                 net_pnl="18", mode="PAPER", closed_at=day_dt),
+                 net_pnl="18", r_multiple="2.0", entry_mode="BREAKOUT_CONFIRM",
+                 mode="PAPER", closed_at=day_dt),
         TradeRow(trade_id="t2", symbol="ETHUSDT", side="SHORT", qty="1",
                  entry_price="2000", exit_price="2050", realized_pnl="-30",
-                 net_pnl="-32", mode="PAPER", closed_at=day_dt),
+                 net_pnl="-32", r_multiple="-1.0", entry_mode="RETEST_CONFIRM",
+                 mode="PAPER", closed_at=day_dt),
+        BotEventRow(type="NO_ENTRY_REASON", symbol="BTCUSDT", message="SCOUT_SCORE_TOO_LOW",
+                    data={"reason_code": "SCOUT_SCORE_TOO_LOW",
+                          "entry_mode_candidate": "PRE_BREAKOUT_SCOUT",
+                          "failed_stage": "entry_timing"},
+                    ts=day_dt),
     )
     data = (await client.get(
         "/logs/daily", params={"date": "2026-06-04", "mode": "PAPER"})).json()["data"]
     assert data["summary"]["trade_count"] == 2
     assert data["summary"]["win_count"] == 1
     assert data["summary"]["loss_count"] == 1
+    assert data["summary"]["no_entry_count"] == 1
+    assert data["sections"]["no_entry_summary"]["by_reason_code"] == {
+        "SCOUT_SCORE_TOO_LOW": 1
+    }
+    assert data["sections"]["no_entry_summary"]["relaxation_candidates"][0] == {
+        "reason_code": "SCOUT_SCORE_TOO_LOW",
+        "count": 1,
+        "candidate": "entry.pre_breakout.min_score",
+    }
+    assert data["sections"]["entry_mode_performance"][0]["trade_count"] == 1
 
 
 async def test_daily_log_bad_date(client):

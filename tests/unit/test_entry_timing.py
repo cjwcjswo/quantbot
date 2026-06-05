@@ -56,7 +56,7 @@ def test_healthy_breakout_returns_breakout_confirm(config):
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.BREAKOUT_CONFIRM
-    assert decision.position_fraction == Decimal("0.35")
+    assert decision.position_fraction == Decimal("0.30")
     assert decision.stop_atr == Decimal("1.0")
 
 
@@ -78,7 +78,7 @@ def test_exhaustion_breakout_then_retest(config):
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.RETEST_CONFIRM
-    assert decision.position_fraction == Decimal("0.45")
+    assert decision.position_fraction == Decimal("0.40")
 
 
 def test_no_breakout_no_pending_no_entry(config):
@@ -147,6 +147,33 @@ def test_scout_entry(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.35")
+    assert decision.position_fraction == Decimal("0.30")
     assert decision.stop_atr == Decimal("0.7")
-    assert decision.score >= Decimal("8")
+    assert decision.score >= Decimal("6")
+
+
+def test_scout_threshold_blocks_low_score(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles()
+    ctx = _ctx(
+        candles_1m=candles, box_high="100.8",
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.9", "atr": "1"},
+    )
+    ctx.snapshot_15m = snap(timeframe="15", close="100", ema20="100.05", ema50="100",
+                            slope="0.01", atr="1", atr_percent="1.5",
+                            volume_ratio="1.0")
+    decision = eng.evaluate(ctx)
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW"
+
+
+def test_retest_tolerance_uses_config(config):
+    config.entry.retest_confirm.retest_tolerance_atr = 0.35
+    config.entry.enabled_modes.pre_breakout_scout = False
+    eng = EntryTimingEngine(config)
+    eng.retests.register("BTCUSDT", SignalDirection.LONG, Decimal("100"))
+    candles = _flat(5, price="100")
+    candles.append(candle(interval="1", o="100.30", h="100.6", l="100.36", c="100.40"))
+    decision = eng.evaluate(_ctx(candles_1m=candles, box_high="101"))
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "RETEST_TOO_FAR_FROM_LEVEL"

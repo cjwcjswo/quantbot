@@ -10,12 +10,13 @@ import { EventsTable } from "@/features/events/components/EventsTable";
 import { ApiClientError } from "@/shared/api/client";
 import { pnlClass } from "@/shared/utils/format";
 
-const TABS = ["Summary", "Trades", "Events", "Manual", "Risk", "Protection", "Raw"] as const;
+const TABS = ["Summary", "Trades", "Events", "NoEntry", "Manual", "Risk", "Protection", "Raw"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = {
   Summary: "요약",
   Trades: "체결",
   Events: "이벤트",
+  NoEntry: "무진입",
   Manual: "수동개입",
   Risk: "리스크",
   Protection: "보호",
@@ -162,6 +163,7 @@ export function DailyLogModal({
                 <MetricCard label="수동개입" value={data.summary.manual_intervention_count} />
                 <MetricCard label="TP/SL 실패" value={data.summary.tpsl_failed_count} />
                 <MetricCard label="비상" value={data.summary.emergency_count} />
+                <MetricCard label="무진입" value={data.summary.no_entry_count ?? 0} />
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                 <SummaryTable title="전략별 손익" rows={summaryRows.byStrategy} />
@@ -203,6 +205,17 @@ export function DailyLogModal({
             </div>
           )}
           {tab === "Manual" && <JsonList rows={data.sections.manual_interventions} />}
+          {tab === "NoEntry" && (
+            <JsonList
+              rows={[
+                {
+                  summary: data.sections.no_entry_summary ?? {},
+                  entry_mode_performance: data.sections.entry_mode_performance ?? [],
+                  top_reasons: data.summary.top_no_entry_reasons ?? {},
+                },
+              ]}
+            />
+          )}
           {tab === "Risk" && <JsonList rows={data.sections.risk_events} />}
           {tab === "Protection" && <JsonList rows={data.sections.protection_events} />}
           {tab === "Raw" && (

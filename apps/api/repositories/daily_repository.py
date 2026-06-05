@@ -61,6 +61,7 @@ async def daily_log(session_factory: Any, *, day: str, mode: str | None) -> dict
     fees = sum(_num(t.fees) for t in trades)
     tpsl_failed = sum(1 for e in events if e.type in ("TPSL_FAILED", "EMERGENCY_TPSL_FAILED"))
     emergency = sum(1 for e in events if e.type.startswith("EMERGENCY"))
+    no_entry = [e for e in events if e.type == "NO_ENTRY_REASON"]
     return {
         "date": day,
         "mode": mode,
@@ -76,6 +77,12 @@ async def daily_log(session_factory: Any, *, day: str, mode: str | None) -> dict
             "manual_intervention_count": len(manuals),
             "tpsl_failed_count": tpsl_failed,
             "emergency_count": emergency,
+            "no_entry_count": len(no_entry),
+            "top_no_entry_reasons": _top_counts(
+                [((e.data or {}).get("reason_code") or e.message or "UNKNOWN")
+                 for e in no_entry],
+                limit=10,
+            ),
         },
         "sections": {
             "trades": [row_to_dict(t) for t in trades],
@@ -84,6 +91,8 @@ async def daily_log(session_factory: Any, *, day: str, mode: str | None) -> dict
             "risk_events": [row_to_dict(e) for e in events
                             if e.type.startswith("RISK") or e.type.startswith("KILL")],
             "protection_events": [row_to_dict(p) for p in protection],
+            "no_entry_summary": _no_entry_summary(no_entry),
+            "entry_mode_performance": _entry_mode_performance(trades),
         },
     }
 
@@ -154,3 +163,112 @@ def _num(v) -> float:
 
 def _fmt(v: float) -> str:
     return f"{v:.2f}"
+
+
+def _top_counts(values: list[str], *, limit: int | None = None) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    items = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+    if limit is not None:
+        items = items[:limit]
+    return dict(items)
+
+
+def _no_entry_summary(events: list[BotEventRow]) -> dict:
+    reasons: list[str] = []
+    symbols: list[str] = []
+    modes: list[str] = []
+    stages: list[str] = []
+    for event in events:
+        data = event.data or {}
+        reasons.append(str(data.get("reason_code") or event.message or "UNKNOWN"))
+        if event.symbol:
+            symbols.append(event.symbol)
+        modes.append(str(data.get("entry_mode_candidate") or "UNKNOWN"))
+        stages.append(str(data.get("failed_stage") or "UNKNOWN"))
+    return {
+        "by_reason_code": _top_counts(reasons),
+        "by_symbol": _top_counts(symbols),
+        "by_entry_mode": _top_counts(modes),
+        "by_failed_stage": _top_counts(stages),
+        "top_blocking_guard": _top_counts(stages, limit=1),
+        "relaxation_candidates": _relaxation_candidates(reasons, stages),
+    }
+
+
+def _relaxation_candidates(reasons: list[str], stages: list[str]) -> list[dict]:
+    counts = _top_counts(reasons)
+    stage_counts = _top_counts(stages)
+    suggestions = {
+        "VOLUME_TOO_LOW": "volume.min_setup_volume_ratio or entry volume threshold",
+        "BREAKOUT_VOLUME_TOO_LOW": "volume.min_breakout_volume_ratio",
+        "BODY_TOO_SMALL": "candle_quality.min_body_ratio_for_breakout",
+        "OPPOSITE_WICK_TOO_LARGE": "candle_quality.max_opposite_wick_ratio_for_breakout",
+        "WEAK_CLOSE_IN_RANGE": "candle_quality close-position threshold",
+        "BREAKOUT_NOT_HEALTHY": "breakout volume, candle quality, or anti-chase thresholds",
+        "BREAKOUT_EXHAUSTION": "entry.anti_chase.exhaustion_volume_ratio",
+        "ANTI_CHASE_LONG": "entry.anti_chase long-side thresholds",
+        "ANTI_CHASE_SHORT": "entry.anti_chase short-side thresholds",
+        "SCOUT_SCORE_TOO_LOW": "entry.pre_breakout.min_score",
+        "SCOUT_TOO_FAR_FROM_BOX": "entry.pre_breakout.max_distance_to_box_atr",
+        "RETEST_TOO_FAR_FROM_LEVEL": "entry.retest_confirm.retest_tolerance_atr",
+        "RISK_REJECTED": "risk limits and open position exposure",
+        "PRE_ORDER_INSUFFICIENT_DEPTH": "orders.pre_order_depth_multiple or scanner depth filter",
+        "COOLDOWN_ACTIVE": "cooldown settings",
+    }
+    rows: list[dict] = []
+    for reason, count in sorted(counts.items(), key=lambda item: item[1], reverse=True):
+        target = suggestions.get(reason)
+        if target is None:
+            continue
+        rows.append({"reason_code": reason, "count": count, "candidate": target})
+        if len(rows) >= 5:
+            break
+    if rows:
+        return rows
+    return [
+        {"failed_stage": stage, "count": count, "candidate": "review this guard first"}
+        for stage, count in list(stage_counts.items())[:5]
+    ]
+
+
+def _entry_mode_performance(trades: list[TradeRow]) -> list[dict]:
+    by_mode: dict[str, dict] = {}
+    for trade in trades:
+        mode = trade.entry_mode or "UNKNOWN"
+        row = by_mode.setdefault(
+            mode,
+            {
+                "entry_mode": mode,
+                "trade_count": 0,
+                "win_count": 0,
+                "loss_count": 0,
+                "net_pnl": 0.0,
+                "r_total": 0.0,
+                "r_count": 0,
+            },
+        )
+        pnl = _num(trade.net_pnl or trade.realized_pnl)
+        row["trade_count"] += 1
+        row["win_count"] += 1 if pnl > 0 else 0
+        row["loss_count"] += 1 if pnl < 0 else 0
+        row["net_pnl"] += pnl
+        r = _num(trade.r_multiple)
+        if trade.r_multiple is not None:
+            row["r_total"] += r
+            row["r_count"] += 1
+    out = []
+    for row in by_mode.values():
+        trades_count = row["trade_count"]
+        avg_r = row["r_total"] / row["r_count"] if row["r_count"] else 0.0
+        out.append({
+            "entry_mode": row["entry_mode"],
+            "trade_count": trades_count,
+            "win_count": row["win_count"],
+            "loss_count": row["loss_count"],
+            "win_rate": _fmt(row["win_count"] / trades_count * 100) if trades_count else "0.00",
+            "net_pnl": _fmt(row["net_pnl"]),
+            "avg_r": _fmt(avg_r),
+        })
+    return sorted(out, key=lambda row: row["trade_count"], reverse=True)

@@ -14,15 +14,25 @@ from packages.core.models import Position
 from packages.messaging import state_keys
 
 
-def _protection_status(p: Position) -> str:
-    if p.stop_loss_price is not None and p.take_profit_price is not None:
-        return "TPSL_OK"
-    if p.stop_loss_price is not None or p.take_profit_price is not None:
+def _protection_status(
+    p: Position, *, require_sl: bool = True, require_tp: bool = True
+) -> str:
+    if not require_sl and not require_tp:
+        return "NOT_REQUIRED"
+    if require_sl and p.stop_loss_price is None:
         return "TPSL_PENDING"
-    return "NOT_REQUIRED"
+    if require_tp and p.take_profit_price is None:
+        return "TPSL_PENDING"
+    return "TPSL_OK"
 
 
-def _position_json(p: Position, mode: BotMode | None = None) -> dict:
+def _position_json(
+    p: Position,
+    mode: BotMode | None = None,
+    *,
+    require_sl: bool = True,
+    require_tp: bool = True,
+) -> dict:
     return {
         "symbol": p.symbol,
         "side": p.side.value,
@@ -35,7 +45,9 @@ def _position_json(p: Position, mode: BotMode | None = None) -> dict:
         "leverage": str(p.leverage),
         "mark_price": None,
         "strategy_id": p.strategy_id or None,
-        "protection_status": _protection_status(p),
+        "protection_status": _protection_status(
+            p, require_sl=require_sl, require_tp=require_tp
+        ),
         "stop_loss": str(p.stop_loss_price) if p.stop_loss_price is not None else None,
         "take_profit": str(p.take_profit_price) if p.take_profit_price is not None else None,
         "unrealized_pnl": str(p.unrealized_pnl),
@@ -44,9 +56,18 @@ def _position_json(p: Position, mode: BotMode | None = None) -> dict:
 
 
 class StatePublisher:
-    def __init__(self, redis: Any | None, mode: BotMode) -> None:
+    def __init__(
+        self,
+        redis: Any | None,
+        mode: BotMode,
+        *,
+        require_sl: bool = True,
+        require_tp: bool = True,
+    ) -> None:
         self._redis = redis
         self._mode = mode
+        self._require_sl = require_sl
+        self._require_tp = require_tp
 
     async def publish(
         self,
@@ -66,7 +87,15 @@ class StatePublisher:
         if positions is not None:
             await self._redis.set(
                 state_keys.BOT_POSITIONS,
-                json.dumps([_position_json(p, self._mode) for p in positions]),
+                json.dumps([
+                    _position_json(
+                        p,
+                        self._mode,
+                        require_sl=self._require_sl,
+                        require_tp=self._require_tp,
+                    )
+                    for p in positions
+                ]),
             )
         if pnl is not None:
             await self._redis.set(state_keys.BOT_PNL, json.dumps(pnl))

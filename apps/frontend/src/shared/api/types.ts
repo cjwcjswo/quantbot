@@ -280,6 +280,18 @@ export type DailyLogSummary = {
   manual_intervention_count: number;
   tpsl_failed_count: number;
   emergency_count: number;
+  no_entry_count?: number;
+  top_no_entry_reasons?: Record<string, number>;
+};
+
+export type EntryModePerformance = {
+  entry_mode: string;
+  trade_count: number;
+  win_count: number;
+  loss_count: number;
+  win_rate: string;
+  net_pnl: string;
+  avg_r: string;
 };
 
 export type DailyLog = {
@@ -292,6 +304,8 @@ export type DailyLog = {
     manual_interventions: Record<string, unknown>[];
     risk_events: Record<string, unknown>[];
     protection_events: Record<string, unknown>[];
+    no_entry_summary?: Record<string, unknown>;
+    entry_mode_performance?: EntryModePerformance[];
   };
 };
 

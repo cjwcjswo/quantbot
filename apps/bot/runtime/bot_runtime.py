@@ -118,6 +118,8 @@ class BotRuntime:
         self._last_scanner_refresh: float = 0.0
         self._scanner_atr_percent: dict[str, Decimal] = {}
         self._scanner_atr_updated_ms: dict[str, int] = {}
+        self._scanner_snapshots_15m: dict[str, Any] = {}
+        self._scanner_snapshots_5m: dict[str, Any] = {}
         self._scanner_cursor: int = 0
         self._last_reconciliation_status: dict[str, Any] = {}
 
@@ -261,7 +263,12 @@ class BotRuntime:
 
         self._event_bus = EventBus(self._redis, sink=self._trade_logger)
         self._commands = CommandQueue(self._redis)
-        self._state_publisher = StatePublisher(self._redis, self.config.bot.mode)
+        self._state_publisher = StatePublisher(
+            self._redis,
+            self.config.bot.mode,
+            require_sl=self.config.tpsl.use_exchange_sl,
+            require_tp=self.config.tpsl.use_exchange_tp,
+        )
         self._lock = RuntimeLock(
             self._redis, ttl_sec=max(10, self.config.bot.heartbeat_interval_sec * 4)
         )
@@ -676,10 +683,24 @@ class BotRuntime:
                 if snap.atr_percent is not None:
                     self._scanner_atr_percent[ticker.symbol] = snap.atr_percent
                     self._scanner_atr_updated_ms[ticker.symbol] = int(time.time() * 1000)
+                    self._scanner_snapshots_15m[ticker.symbol] = snap
+                await self._collector.refresh_klines(
+                    ticker.symbol,
+                    "5",
+                    limit=200,
+                    min_refresh_ms=self.config.scanner.kline_5m_refresh_sec * 1000,
+                )
+                candles_5m = self._collector.store.get(ticker.symbol, "5")
+                self._scanner_snapshots_5m[ticker.symbol] = self._indicators.snapshot(
+                    ticker.symbol, "5", candles_5m
+                )
             except Exception:
                 logger.debug("scanner indicator refresh failed for %s", ticker.symbol)
         self._watchlist = self._scanner.scan(
-            tickers, self._fresh_scanner_atr(candidates, int(time.time() * 1000))
+            tickers,
+            self._fresh_scanner_atr(candidates, int(time.time() * 1000)),
+            snapshots_15m=self._scanner_snapshots_15m,
+            snapshots_5m=self._scanner_snapshots_5m,
         )
         self._last_scanner_refresh = now
 
@@ -700,13 +721,41 @@ class BotRuntime:
             spread = (ticker.ask_price - ticker.bid_price) / mid * Decimal(100)
             if spread > Decimal(str(cfg.scanner.max_spread_percent)):
                 continue
-            eligible.append(ticker)
-        eligible.sort(key=lambda t: t.turnover_24h, reverse=True)
+            eligible.append((ticker, spread))
+        if eligible:
+            min_turnover = min(t.turnover_24h for t, _ in eligible)
+            max_turnover = max(t.turnover_24h for t, _ in eligible)
+            eligible.sort(
+                key=lambda item: self._scanner_prefilter_score(
+                    item[0], item[1], min_turnover, max_turnover
+                ),
+                reverse=True,
+            )
         limit = max(
             cfg.scanner.max_candidates,
             cfg.scanner.max_candidates * cfg.scanner.atr_prefilter_multiple,
         )
-        return eligible[:limit]
+        return [t for t, _ in eligible[:limit]]
+
+    @staticmethod
+    def _scanner_prefilter_score(
+        ticker,
+        spread_percent: Decimal,
+        min_turnover: Decimal,
+        max_turnover: Decimal,
+    ) -> Decimal:
+        if max_turnover == min_turnover:
+            turnover_score = Decimal(100)
+        elif max_turnover > 0:
+            turnover_score = (
+                (ticker.turnover_24h - min_turnover)
+                / (max_turnover - min_turnover)
+                * Decimal(100)
+            )
+        else:
+            turnover_score = Decimal(0)
+        spread_score = Decimal(100) if spread_percent <= Decimal("0.05") else Decimal(70)
+        return turnover_score * Decimal("0.70") + spread_score * Decimal("0.30")
 
     def _scanner_refresh_batch(self, candidates) -> list:
         if not candidates:
@@ -730,6 +779,8 @@ class BotRuntime:
             ):
                 self._scanner_atr_percent.pop(symbol, None)
                 self._scanner_atr_updated_ms.pop(symbol, None)
+                self._scanner_snapshots_15m.pop(symbol, None)
+                self._scanner_snapshots_5m.pop(symbol, None)
         return dict(self._scanner_atr_percent)
 
     async def _process_symbol(self, symbol: str, equity: Decimal) -> dict | None:
@@ -926,7 +977,12 @@ class BotRuntime:
                 self._redis, self._lock, self.state_machine, self.config.bot.mode
             )
         if self._state_publisher is not None:
-            self._state_publisher = StatePublisher(self._redis, self.config.bot.mode)
+            self._state_publisher = StatePublisher(
+                self._redis,
+                self.config.bot.mode,
+                require_sl=self.config.tpsl.use_exchange_sl,
+                require_tp=self.config.tpsl.use_exchange_tp,
+            )
         logger.info("Config reloaded and runtime modules rebuilt")
 
     async def _stop_bot(self, payload: dict) -> None:
@@ -1086,8 +1142,14 @@ class BotRuntime:
                     "has_stop_loss": p.stop_loss_price is not None,
                     "has_take_profit": p.take_profit_price is not None,
                     "protected": (
-                        p.stop_loss_price is not None
-                        and p.take_profit_price is not None
+                        (
+                            not self.config.tpsl.use_exchange_sl
+                            or p.stop_loss_price is not None
+                        )
+                        and (
+                            not self.config.tpsl.use_exchange_tp
+                            or p.take_profit_price is not None
+                        )
                     ),
                 }
             )

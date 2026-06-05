@@ -33,10 +33,9 @@ def test_long_not_blocked_when_calm(config):
 
 
 def test_long_blocked_overbought(config):
-    config.entry.anti_chase.max_rsi_long = 72
     ac = AntiChase(config)
     candles = _flat_1m()
-    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="73", volume_ratio="1.0")
+    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="70", volume_ratio="1.0")
     assert ac.block_long(s, candles, metrics_of(candles[-1])) == "RSI_OVERBOUGHT"
 
 
@@ -69,11 +68,20 @@ def test_long_blocked_weak_close(config):
 
 
 def test_short_blocked_oversold(config):
-    config.entry.anti_chase.min_rsi_short = 28
     ac = AntiChase(config)
     candles = _flat_1m()
-    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="27", volume_ratio="1.0")
+    s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="30", volume_ratio="1.0")
     assert ac.block_short(s, candles, metrics_of(candles[-1])) == "RSI_OVERSOLD"
+
+
+def test_long_blocked_exhaustion_uses_anti_chase_config(config):
+    ac = AntiChase(config)
+    candles = _flat_1m()
+    wick = candle(interval="1", o="100", h="101", l="99.5", c="100.2")
+    candles[-1] = wick
+    s = snap(timeframe="1", close="100.2", ema20="100", atr="1",
+             rsi="55", volume_ratio="4.0")
+    assert ac.block_long(s, candles, metrics_of(wick)) == "EXHAUSTION_UPPER_WICK"
 
 
 def test_disabled_never_blocks(config):
