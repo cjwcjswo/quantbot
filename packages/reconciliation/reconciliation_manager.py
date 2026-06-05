@@ -93,7 +93,7 @@ class ReconciliationManager:
         for symbol, exch in exch_by_symbol.items():
             internal = self._state.get_position(symbol)
             if internal is None or internal.status == PositionStatus.CLOSED:
-                if self._state.has_pending_order_for_symbol(symbol):
+                if self._state.has_bot_order_settling_for_symbol(symbol):
                     continue
                 await self._handler.handle_external_position(exch)
                 result.external_positions.append(symbol)
@@ -103,6 +103,8 @@ class ReconciliationManager:
                 internal.avg_entry_price = exch.avg_price
                 internal.liq_price = exch.liq_price
             elif internal.qty != exch.size:
+                if self._state.has_bot_order_settling_for_symbol(symbol):
+                    continue
                 await self._handler.handle_qty_mismatch(internal, exch)
                 result.qty_mismatches.append(symbol)
             else:
@@ -116,6 +118,8 @@ class ReconciliationManager:
                 internal.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
                 and symbol not in exch_by_symbol
             ):
+                if self._state.has_bot_order_settling_for_symbol(symbol):
+                    continue
                 if internal.source == PositionSource.BOT:
                     await self._handler.handle_bot_exchange_close(internal)
                     result.exchange_closes.append(symbol)

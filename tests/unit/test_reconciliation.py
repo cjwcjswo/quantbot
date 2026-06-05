@@ -94,6 +94,47 @@ async def test_manual_partial_close_reflected(config, events):
     assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED in events.types()
 
 
+async def test_qty_mismatch_ignored_while_bot_order_pending(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="2", avg="100")
+    state.positions["BTCUSDT"] = pos
+    state.reserve_order("exit-btc", "BTCUSDT")
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1.2"), avg_price=Decimal("100"),
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.qty_mismatches == []
+    assert pos.qty == Decimal("2")
+    assert not state.new_entries_paused()
+    assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED not in events.types()
+
+
+async def test_qty_mismatch_ignored_during_bot_position_update(config, events):
+    state, gw, recon = _make(config, events)
+    pos = _bot_position(qty="2", avg="100")
+    state.positions["BTCUSDT"] = pos
+    state.begin_position_update("BTCUSDT")
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1.2"), avg_price=Decimal("100"),
+        )
+    )
+
+    result = await recon.reconcile_once()
+    state.end_position_update("BTCUSDT")
+
+    assert result.qty_mismatches == []
+    assert pos.qty == Decimal("2")
+    assert not state.new_entries_paused()
+    assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED not in events.types()
+
+
 async def test_external_close_marks_closed(config, events):
     state, gw, recon = _make(config, events)
     pos = _bot_position(qty="1")
@@ -226,6 +267,31 @@ async def test_pending_bot_order_not_flagged_external_or_adopted(config, events)
     assert result.external_positions == []
     assert state.get_position("1000PEPEUSDT") is None
     assert not state.new_entries_paused()
+
+
+async def test_position_update_not_flagged_external_or_exchange_closed(config, events):
+    state, gw, recon = _make(config, events)
+    state.begin_position_update("BTCUSDT")
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT", side=PositionSide.LONG,
+            size=Decimal("1"), avg_price=Decimal("100"),
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.external_positions == []
+    assert state.get_position("BTCUSDT") is None
+
+    pos = _bot_position(qty="1", avg="100")
+    state.positions["BTCUSDT"] = pos
+    gw.positions.pop("BTCUSDT")
+    result = await recon.reconcile_once()
+    state.end_position_update("BTCUSDT")
+
+    assert result.exchange_closes == []
+    assert pos.status == PositionStatus.ACTIVE
 
 
 async def test_bot_prefix_order_not_flagged_external_after_restart(config, events):

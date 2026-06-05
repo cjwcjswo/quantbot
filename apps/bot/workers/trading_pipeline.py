@@ -546,46 +546,50 @@ class TradingService:
             )
             else None
         )
-        opened = await self._executor.open(
-            symbol=symbol, side=side, qty=rd.qty, leverage=rd.leverage,
-            best_bid=best_bid, best_ask=best_ask, entry_mode=decision.entry_mode,
-            stop_loss=attach_sl, take_profit=attach_tp,
-        )
-        if not opened.ok or opened.fill_qty <= 0:
-            if decision.entry_mode == EntryMode.BREAKOUT_CONFIRM:
-                level = box_high if sig.direction == SignalDirection.LONG else box_low
-                self._entry.retests.register(symbol, sig.direction, level)
-            self._record_order_failure()
-            await self._emit(BotEvent(type=BotEventType.ORDER_FAILED, symbol=symbol,
-                                      message=opened.reason))
-            return None
-        self._record_slippage_if_breached(side, opened.fill_price, best_bid, best_ask)
-
-        pos = Position(
-            symbol=symbol, side=rd.side, status=PositionStatus.PENDING,
-            source=PositionSource.BOT, qty=opened.fill_qty,
-            avg_entry_price=opened.fill_price, leverage=rd.leverage,
-            stop_loss_price=rd.stop_loss_price, take_profit_price=rd.take_profit_price,
-            initial_risk_per_unit=abs(opened.fill_price - rd.stop_loss_price),
-            entry_mode=decision.entry_mode, signal_score=sig.score,
-            strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
-            breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
-        )
-        self._state.positions[symbol] = pos
-
-        # Activation: LIVE requires TP/SL protection (§5); PAPER stores virtual levels.
-        if self.mode == BotMode.LIVE and self._protection is not None:
-            result = await self._protection.protect(pos)
-            if not result.protected:
+        self._state.begin_position_update(symbol)
+        try:
+            opened = await self._executor.open(
+                symbol=symbol, side=side, qty=rd.qty, leverage=rd.leverage,
+                best_bid=best_bid, best_ask=best_ask, entry_mode=decision.entry_mode,
+                stop_loss=attach_sl, take_profit=attach_tp,
+            )
+            if not opened.ok or opened.fill_qty <= 0:
+                if decision.entry_mode == EntryMode.BREAKOUT_CONFIRM:
+                    level = box_high if sig.direction == SignalDirection.LONG else box_low
+                    self._entry.retests.register(symbol, sig.direction, level)
                 self._record_order_failure()
-                if result.reason == "EMERGENCY_STOP":
-                    self._record_emergency_close_failure()
-                self._transition_after_protection_failure(result.reason)
                 await self._emit(BotEvent(type=BotEventType.ORDER_FAILED, symbol=symbol,
-                                          message=f"tpsl:{result.reason}"))
+                                          message=opened.reason))
                 return None
-        else:
-            self._positions.mark_active_paper(pos)
+            self._record_slippage_if_breached(side, opened.fill_price, best_bid, best_ask)
+
+            pos = Position(
+                symbol=symbol, side=rd.side, status=PositionStatus.PENDING,
+                source=PositionSource.BOT, qty=opened.fill_qty,
+                avg_entry_price=opened.fill_price, leverage=rd.leverage,
+                stop_loss_price=rd.stop_loss_price, take_profit_price=rd.take_profit_price,
+                initial_risk_per_unit=abs(opened.fill_price - rd.stop_loss_price),
+                entry_mode=decision.entry_mode, signal_score=sig.score,
+                strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
+                breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
+            )
+            self._state.positions[symbol] = pos
+
+            # Activation: LIVE requires TP/SL protection (§5); PAPER stores virtual levels.
+            if self.mode == BotMode.LIVE and self._protection is not None:
+                result = await self._protection.protect(pos)
+                if not result.protected:
+                    self._record_order_failure()
+                    if result.reason == "EMERGENCY_STOP":
+                        self._record_emergency_close_failure()
+                    self._transition_after_protection_failure(result.reason)
+                    await self._emit(BotEvent(type=BotEventType.ORDER_FAILED, symbol=symbol,
+                                              message=f"tpsl:{result.reason}"))
+                    return None
+            else:
+                self._positions.mark_active_paper(pos)
+        finally:
+            self._state.end_position_update(symbol)
 
         if self._logger is not None:
             protection = self._position_protection_status(pos)
@@ -730,71 +734,86 @@ class TradingService:
         return actions
 
     async def _close(self, pos, qty, reason, best_bid, best_ask, *, full, prefer_limit):
-        limit_price = pos.take_profit_price if prefer_limit else None
-        result = await self._executor.close(
-            symbol=pos.symbol, side=_exit_side(pos), qty=qty,
-            best_bid=best_bid, best_ask=best_ask,
-            prefer_limit=prefer_limit, limit_price=limit_price,
-        )
-        filled_qty = result.fill_qty
-        if filled_qty <= 0:
-            return
-        direction = Decimal(1) if pos.side == PositionSide.LONG else Decimal(-1)
-        realized = (
-            result.realized
-            if result.realized is not None
-            else (result.fill_price - pos.avg_entry_price) * filled_qty * direction
-        )
-        pos.realized_pnl += realized
-        pos.fees_paid += result.fee
-        pos.qty -= filled_qty
-        if full or pos.qty <= 0:
-            pos.status = PositionStatus.CLOSED
-            pos.closed_at = datetime.now(timezone.utc)
-            pos.exit_reason = reason
-        if self._logger is not None:
-            await self._logger.log_fill(
-                self._as_fill_raw(
-                    pos.symbol, _exit_side(pos), result.fill_price, filled_qty, result.fee
-                ),
-                realized_pnl=str(realized), mode=self.mode.value,
+        self._state.begin_position_update(pos.symbol)
+        try:
+            limit_price = pos.take_profit_price if prefer_limit else None
+            result = await self._executor.close(
+                symbol=pos.symbol, side=_exit_side(pos), qty=qty,
+                best_bid=best_bid, best_ask=best_ask,
+                prefer_limit=prefer_limit, limit_price=limit_price,
             )
-            await self._logger.log_position(pos, mode=self.mode.value)
             if pos.status == PositionStatus.CLOSED:
-                r_mult = None
-                if (
-                    pos.initial_risk_per_unit
-                    and pos.initial_risk_per_unit > 0
-                    and filled_qty > 0
-                ):
-                    r_mult = str(
-                        pos.realized_pnl / (pos.initial_risk_per_unit * filled_qty)
+                return
+            filled_qty = result.fill_qty
+            if filled_qty <= 0:
+                return
+            direction = Decimal(1) if pos.side == PositionSide.LONG else Decimal(-1)
+            realized = (
+                result.realized
+                if result.realized is not None
+                else (result.fill_price - pos.avg_entry_price) * filled_qty * direction
+            )
+            pos.realized_pnl += realized
+            pos.fees_paid += result.fee
+            pos.qty -= filled_qty
+            if full or pos.qty <= 0:
+                pos.status = PositionStatus.CLOSED
+                pos.closed_at = datetime.now(timezone.utc)
+                pos.exit_reason = reason
+            if self._logger is not None:
+                await self._logger.log_fill(
+                    self._as_fill_raw(
+                        pos.symbol, _exit_side(pos), result.fill_price,
+                        filled_qty, result.fee,
+                    ),
+                    realized_pnl=str(realized), mode=self.mode.value,
+                )
+                await self._logger.log_position(pos, mode=self.mode.value)
+                if pos.status == PositionStatus.CLOSED:
+                    r_mult = None
+                    if (
+                        pos.initial_risk_per_unit
+                        and pos.initial_risk_per_unit > 0
+                        and filled_qty > 0
+                    ):
+                        r_mult = str(
+                            pos.realized_pnl / (pos.initial_risk_per_unit * filled_qty)
+                        )
+                    await self._logger.log_trade(
+                        symbol=pos.symbol, side=pos.side.value, qty=str(filled_qty),
+                        entry_price=str(pos.avg_entry_price),
+                        exit_price=str(result.fill_price),
+                        realized_pnl=str(pos.realized_pnl),
+                        exit_reason=reason.value if reason else None,
+                        strategy_id=pos.strategy_id or None,
+                        entry_mode=pos.entry_mode.value if pos.entry_mode else None,
+                        mode=self.mode.value, leverage=str(pos.leverage),
+                        fees=str(pos.fees_paid),
+                        gross_pnl=str(pos.realized_pnl + pos.fees_paid),
+                        net_pnl=str(pos.realized_pnl), r_multiple=r_mult,
+                        opened_at=pos.opened_at, closed_at=pos.closed_at,
                     )
-                await self._logger.log_trade(
-                    symbol=pos.symbol, side=pos.side.value, qty=str(filled_qty),
-                    entry_price=str(pos.avg_entry_price), exit_price=str(result.fill_price),
-                    realized_pnl=str(pos.realized_pnl),
-                    exit_reason=reason.value if reason else None,
-                    strategy_id=pos.strategy_id or None,
-                    entry_mode=pos.entry_mode.value if pos.entry_mode else None,
-                    mode=self.mode.value, leverage=str(pos.leverage),
-                    fees=str(pos.fees_paid),
-                    gross_pnl=str(pos.realized_pnl + pos.fees_paid),
-                    net_pnl=str(pos.realized_pnl), r_multiple=r_mult,
-                    opened_at=pos.opened_at, closed_at=pos.closed_at,
+            if pos.status == PositionStatus.CLOSED:
+                if self._guards.cooldown is not None and pos.entry_mode is not None:
+                    self._guards.cooldown.record_result(
+                        pos.symbol, pos.entry_mode, is_win=pos.realized_pnl > 0
+                    )
+                if self._guards.kill_switch is not None:
+                    self._guards.kill_switch.record_trade_result(
+                        is_win=pos.realized_pnl > 0
+                    )
+                await self._emit(
+                    BotEvent(
+                        type=BotEventType.POSITION_CLOSED,
+                        symbol=pos.symbol,
+                        data={
+                            "realized_pnl": str(pos.realized_pnl),
+                            "reason": reason.value if reason else None,
+                        },
+                    )
                 )
-        if pos.status == PositionStatus.CLOSED:
-            if self._guards.cooldown is not None and pos.entry_mode is not None:
-                self._guards.cooldown.record_result(
-                    pos.symbol, pos.entry_mode, is_win=pos.realized_pnl > 0
-                )
-            if self._guards.kill_switch is not None:
-                self._guards.kill_switch.record_trade_result(
-                    is_win=pos.realized_pnl > 0
-                )
-            await self._emit(BotEvent(type=BotEventType.POSITION_CLOSED, symbol=pos.symbol,
-                                      data={"realized_pnl": str(pos.realized_pnl),
-                                            "reason": reason.value if reason else None}))
+        finally:
+            self._state.end_position_update(pos.symbol)
 
     @staticmethod
     def _as_fill(opened: OpenResult, symbol: str, side: Side) -> Fill:

@@ -22,6 +22,7 @@ class RuntimeState:
         self.orders: dict[str, Order] = {}  # by client_order_id
         self.external_orders: dict[str, ExchangeOrder] = {}  # by order_id
         self.pending_order_symbols: dict[str, str] = {}  # client_order_id -> symbol
+        self.position_update_symbols: dict[str, int] = {}  # symbol -> in-flight count
         # new-entry pause window
         self._new_entry_pause_until: float = 0.0
 
@@ -61,6 +62,27 @@ class RuntimeState:
 
     def has_pending_order_for_symbol(self, symbol: str) -> bool:
         return symbol in self.pending_order_symbols.values()
+
+    def begin_position_update(self, symbol: str) -> None:
+        self.position_update_symbols[symbol] = (
+            self.position_update_symbols.get(symbol, 0) + 1
+        )
+
+    def end_position_update(self, symbol: str) -> None:
+        count = self.position_update_symbols.get(symbol, 0)
+        if count <= 1:
+            self.position_update_symbols.pop(symbol, None)
+        else:
+            self.position_update_symbols[symbol] = count - 1
+
+    def has_position_update_for_symbol(self, symbol: str) -> bool:
+        return self.position_update_symbols.get(symbol, 0) > 0
+
+    def has_bot_order_settling_for_symbol(self, symbol: str) -> bool:
+        return (
+            self.has_pending_order_for_symbol(symbol)
+            or self.has_position_update_for_symbol(symbol)
+        )
 
     # ---- new-entry pause window (impl doc §4.3) ------------------------ #
     def pause_new_entries(self, seconds: float) -> None:

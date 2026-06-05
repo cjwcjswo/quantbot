@@ -122,6 +122,7 @@ class BotRuntime:
         self._scanner_snapshots_5m: dict[str, Any] = {}
         self._scanner_cursor: int = 0
         self._last_reconciliation_status: dict[str, Any] = {}
+        self._last_kill_switch_trip_reason: str | None = None
 
         self._shutdown = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -1119,7 +1120,9 @@ class BotRuntime:
         reason = self._kill_switch.evaluate()
         if reason is None:
             return
-        await self._emit_event(BotEventType.KILL_SWITCH_TRIPPED, reason)
+        if reason != self._last_kill_switch_trip_reason:
+            self._last_kill_switch_trip_reason = reason
+            await self._emit_event(BotEventType.KILL_SWITCH_TRIPPED, reason)
         if self.state_machine.state == BotState.RUNNING:
             self.state_machine.transition(BotState.RISK_LOCKED, reason=reason)
 

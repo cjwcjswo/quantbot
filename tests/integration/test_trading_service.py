@@ -5,6 +5,7 @@ from decimal import Decimal
 from apps.bot.runtime.bot_state_machine import BotStateMachine
 from apps.bot.runtime.runtime_state import RuntimeState
 from apps.bot.workers.trading_pipeline import (
+    CloseResult,
     GuardSet,
     LiveExecutor,
     MarketContext,
@@ -13,7 +14,7 @@ from apps.bot.workers.trading_pipeline import (
 )
 from packages.core.enums import BotMode, BotState, PositionStatus
 from packages.core.enums import EntryMode, PositionSide, PositionSource
-from packages.core.models import Position
+from packages.core.models import ExchangePosition, Position
 from packages.core.models import OrderBook, OrderBookLevel
 from packages.entry import EntryTimingEngine
 from packages.execution import OrderManager, PaperExecutionEngine
@@ -25,6 +26,7 @@ from packages.guards import (
 )
 from packages.messaging import EventBus
 from packages.position import CooldownTracker, PositionManager, PositionProtectionManager
+from packages.reconciliation import ManualInterventionHandler, ReconciliationManager
 from packages.risk import RiskManager
 from packages.signal import SignalEngine
 from packages.strategy import StrategyRegistry, TrendFollowingStrategy
@@ -50,7 +52,9 @@ def _candles():
     return flats + [candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0")]
 
 
-def _make_service(config, *, mode, executor, guards=None, protection=None, events=None):
+def _make_service(
+    config, *, mode, executor, guards=None, protection=None, events=None, state=None
+):
     registry = StrategyRegistry()
     registry.register(TrendFollowingStrategy(config))
     bus = EventBus(redis=None, sink=events) if events is not None else None
@@ -60,7 +64,7 @@ def _make_service(config, *, mode, executor, guards=None, protection=None, event
         entry_engine=EntryTimingEngine(config),
         risk_manager=RiskManager(config),
         position_manager=PositionManager(config),
-        state=RuntimeState(),
+        state=state or RuntimeState(),
         executor=executor,
         guards=guards,
         protection_manager=protection,
@@ -314,3 +318,67 @@ async def test_manage_reduces_position_on_extreme_funding(config):
         funding_rate=Decimal("0.0012"),
     )
     assert pos.qty == Decimal("5.0")
+
+
+async def test_close_settlement_does_not_trigger_manual_mismatch(config, events):
+    state = RuntimeState()
+    gw = FakeGateway()
+    bus = EventBus(redis=None, sink=events)
+    handler = ManualInterventionHandler(state, bus, config.manual_intervention)
+    recon = ReconciliationManager(gw, state, handler, bus, config.reconciliation)
+
+    class ReconcileDuringCloseExecutor:
+        async def open(self, **_kwargs):  # pragma: no cover - not used here
+            raise AssertionError("open should not be called")
+
+        async def close(self, **_kwargs):
+            gw.set_position(
+                ExchangePosition(
+                    symbol="NEARUSDT",
+                    side=PositionSide.SHORT,
+                    size=Decimal("16.9"),
+                    avg_price=Decimal("1.943"),
+                )
+            )
+            result = await recon.reconcile_once()
+            assert result.qty_mismatches == []
+            return CloseResult(
+                fill_qty=Decimal("16.8"),
+                fill_price=Decimal("1.94747619"),
+                fee=Decimal("0"),
+                realized=Decimal("-0.075199992"),
+            )
+
+    pos = Position(
+        symbol="NEARUSDT",
+        side=PositionSide.SHORT,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("33.7"),
+        avg_entry_price=Decimal("1.943"),
+        stop_loss_price=Decimal("1.9529"),
+        take_profit_price=Decimal("1.9232"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+    )
+    state.positions[pos.symbol] = pos
+    service = _make_service(
+        config,
+        mode=BotMode.LIVE,
+        executor=ReconcileDuringCloseExecutor(),
+        events=events,
+        state=state,
+    )
+
+    ok = await service.close_position(
+        "NEARUSDT",
+        best_bid=Decimal("1.9474"),
+        best_ask=Decimal("1.9475"),
+        close_percent=Decimal("50"),
+    )
+
+    assert ok is True
+    assert pos.qty == Decimal("16.9")
+    assert pos.manual_added_qty == Decimal("0")
+    assert not state.new_entries_paused()
+    from packages.core.events import BotEventType
+    assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED not in events.types()
