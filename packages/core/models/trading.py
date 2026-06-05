@@ -15,6 +15,7 @@ from packages.core.enums import (
     PositionSide,
     PositionSource,
     PositionStatus,
+    ScoutState,
     Side,
     SignalDirection,
 )
@@ -136,6 +137,14 @@ class Position(_Mut):
     trailing_active: bool = False
     bars_since_entry: int = 0
     breakout_level: Decimal | None = None
+    scout_state: ScoutState = ScoutState.NONE
+    scout_entry_box_high: Decimal | None = None
+    scout_entry_box_low: Decimal | None = None
+    scout_entry_box_mid: Decimal | None = None
+    scout_entry_level: Decimal | None = None
+    scout_entry_bar_index: int | None = None
+    scout_defensive_reduction_count: int = 0
+    scout_confirmed_at: datetime | None = None
 
     opened_at: datetime = Field(default_factory=_now)
     closed_at: datetime | None = None

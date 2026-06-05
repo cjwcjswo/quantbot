@@ -830,7 +830,8 @@ class BotRuntime:
             atr1 = s1.atr14 or Decimal(0)
             actions = await self._trading.manage(
                 symbol=symbol, price=ticker.last_price, atr=atr1,
-                best_bid=bid, best_ask=ask, snapshot_5m=snapshots["5"],
+                best_bid=bid, best_ask=ask, snapshot_1m=snapshots["1"],
+                snapshot_5m=snapshots["5"],
                 candle_1m=self._collector.store.last_closed(symbol, "1"),
                 volume_ratio=s1.volume_ratio,
                 funding_rate=ticker.funding_rate,

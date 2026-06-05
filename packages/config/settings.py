@@ -267,6 +267,22 @@ class PositionProtectionSection(_Section):
     tpsl_verify_tolerance_percent: float = 0.02
 
 
+class ScoutManagementSection(_Section):
+    enabled: bool = True
+    grace_bars: int = 6
+    confirmation_boundary_atr: float = 0.03
+    confirmation_volume_ratio: float = 1.1
+    max_defensive_reductions: int = 1
+    defensive_reduce_fraction: float = 0.50
+    invalidate_on_box_mid_reclaim: bool = True
+    invalidate_on_ema20_reclaim_bars: int = 2
+    long_invalid_rsi_threshold: float = 45
+    short_invalid_rsi_threshold: float = 55
+    strong_opposite_candle_body_ratio: float = 0.55
+    strong_opposite_candle_volume_ratio: float = 1.5
+    convert_to_active_on_confirmation: bool = True
+
+
 class PositionSection(_Section):
     partial_take_profit_r: float = 2.0
     partial_take_profit_fraction: float = 0.50
@@ -277,6 +293,7 @@ class PositionSection(_Section):
     max_holding_minutes: int = 180
     sync_exchange_sl_with_trailing: bool = True
     min_exchange_sl_update_interval_sec: int = 5
+    scout_management: ScoutManagementSection = ScoutManagementSection()
 
 
 class StagnationScout(_Section):

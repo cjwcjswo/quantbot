@@ -40,6 +40,9 @@ def test_loads_repo_config():
     assert cfg.volatility_adaptive_stop.retest_atr_percent_tiers[1].stop_atr == 1.3
     assert cfg.structure_stop.enabled is True
     assert cfg.structure_stop.apply_to_entry_modes == ["RETEST_CONFIRM"]
+    assert cfg.position.scout_management.enabled is True
+    assert cfg.position.scout_management.grace_bars == 6
+    assert cfg.position.scout_management.max_defensive_reductions == 1
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 

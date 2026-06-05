@@ -15,7 +15,13 @@ from decimal import Decimal
 from enum import StrEnum
 
 from packages.config.settings import AppConfig
-from packages.core.enums import ExitReason, PositionSide, PositionStatus
+from packages.core.enums import (
+    EntryMode,
+    ExitReason,
+    PositionSide,
+    PositionStatus,
+    ScoutState,
+)
 from packages.core.models import Candle, IndicatorSnapshot, Position
 from packages.entry.candle_metrics import metrics_of
 
@@ -25,6 +31,7 @@ class PositionActionType(StrEnum):
     REDUCE = "REDUCE"
     EXIT = "EXIT"
     TRAIL_UPDATE = "TRAIL_UPDATE"
+    SCOUT_EVENT = "SCOUT_EVENT"
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,8 @@ class PositionAction:
     qty: Decimal | None = None
     reason: ExitReason | None = None
     new_stop: Decimal | None = None
+    event_type: str | None = None
+    data: dict | None = None
 
 
 class PositionManager:
@@ -51,6 +60,7 @@ class PositionManager:
         self._stag_reduced: set[str] = set()
         self._scenario_recovery: dict[str, int] = {}
         self._break_level_fail_closes: dict[str, int] = {}
+        self._scout_ema_reclaim_counts: dict[str, int] = {}
 
     def mark_active_paper(self, position: Position) -> None:
         """PAPER positions become ACTIVE once virtual fill + SL/TP stored (§14.1)."""
@@ -72,6 +82,7 @@ class PositionManager:
         price: Decimal,
         atr: Decimal,
         candle_1m: Candle | None = None,
+        snapshot_1m: IndicatorSnapshot | None = None,
         snapshot_5m: IndicatorSnapshot | None = None,
         volume_ratio: Decimal | None = None,
         now: datetime | None = None,
@@ -91,24 +102,37 @@ class PositionManager:
         if held_min >= self.max_holding_minutes:
             return [self._exit(position, ExitReason.MAX_HOLDING_TIME)]
 
+        prefix_actions, apply_general_management = self._scout_management_action(
+            position,
+            price=price,
+            atr=atr,
+            candle=candle_1m,
+            snapshot_1m=snapshot_1m,
+            volume_ratio=volume_ratio,
+            max_r=max_r,
+            now=now,
+        )
+        if not apply_general_management:
+            return prefix_actions
+
         # 2. trailing stop breach (§14.3)
         if max_r >= self.trailing_start_r:
             position.trailing_active = True
             trail_stop = self._trail_stop(position, atr, max_r)
             if self._stop_breached(position, price, trail_stop):
-                return [self._exit(position, ExitReason.TRAILING_STOP)]
+                return prefix_actions + [self._exit(position, ExitReason.TRAILING_STOP)]
 
         # 3. scenario invalidation (§14.5)
         scenario = self._scenario_action(position, r, snapshot_5m, candle_1m, volume_ratio)
         if scenario is not None:
-            return [scenario]
+            return prefix_actions + [scenario]
 
         # 4. stagnation (§14.4)
         stagnation = self._stagnation_action(position, max_r)
         if stagnation is not None:
-            return [stagnation]
+            return prefix_actions + [stagnation]
 
-        actions: list[PositionAction] = []
+        actions: list[PositionAction] = list(prefix_actions)
 
         # 5. partial take-profit (§14.2)
         if not position.partial_tp_done and r >= self.partial_r:
@@ -131,6 +155,324 @@ class PositionManager:
                     PositionAction(type=PositionActionType.TRAIL_UPDATE, new_stop=new_stop)
                 )
         return actions
+
+    # ------------------------------------------------------------------ #
+    # PRE_BREAKOUT_SCOUT management
+    # ------------------------------------------------------------------ #
+    def _scout_management_action(
+        self,
+        position: Position,
+        *,
+        price: Decimal,
+        atr: Decimal,
+        candle: Candle | None,
+        snapshot_1m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+        max_r: Decimal,
+        now: datetime,
+    ) -> tuple[list[PositionAction], bool]:
+        c = self.cfg.position.scout_management
+        if (
+            not c.enabled
+            or position.entry_mode != EntryMode.PRE_BREAKOUT_SCOUT
+            or position.scout_state == ScoutState.NONE
+        ):
+            return [], True
+        if position.scout_state == ScoutState.ACTIVE_TREND:
+            return [], True
+        if candle is None or atr <= 0:
+            return [], False
+
+        if position.scout_state == ScoutState.SCOUT_CONFIRMED:
+            if c.convert_to_active_on_confirmation:
+                position.scout_state = ScoutState.ACTIVE_TREND
+                return [
+                    self._scout_event(
+                        position,
+                        "SCOUT_ACTIVATED",
+                        price,
+                        candle,
+                        snapshot_1m=snapshot_1m,
+                        volume_ratio=volume_ratio,
+                    )
+                ], True
+            return [], False
+
+        if position.scout_state != ScoutState.SCOUT_PENDING:
+            return [], True
+
+        if self._scout_confirmed(position, atr, candle, volume_ratio):
+            position.scout_state = ScoutState.SCOUT_CONFIRMED
+            position.scout_confirmed_at = now
+            events = [
+                self._scout_event(
+                    position,
+                    "SCOUT_CONFIRMED",
+                    price,
+                    candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                )
+            ]
+            if c.convert_to_active_on_confirmation:
+                position.scout_state = ScoutState.ACTIVE_TREND
+                events.append(
+                    self._scout_event(
+                        position,
+                        "SCOUT_ACTIVATED",
+                        price,
+                        candle,
+                        snapshot_1m=snapshot_1m,
+                        volume_ratio=volume_ratio,
+                    )
+                )
+                return events, True
+            return events, False
+
+        bars_since_scout = self._scout_bars_since_entry(position)
+        strong_reason = self._scout_strong_opposite_reason(
+            position, candle, volume_ratio
+        )
+        in_grace = bars_since_scout < c.grace_bars
+        weakness_reason = (
+            strong_reason
+            if strong_reason is not None
+            else None
+            if in_grace
+            else self._scout_weakness_reason(
+                position, candle, snapshot_1m, volume_ratio
+            )
+        )
+
+        if (
+            weakness_reason is not None
+            and position.scout_defensive_reduction_count
+            < c.max_defensive_reductions
+        ):
+            position.scout_defensive_reduction_count += 1
+            qty = self._round_qty(
+                position.qty * Decimal(str(c.defensive_reduce_fraction))
+            )
+            return [
+                PositionAction(
+                    type=PositionActionType.REDUCE,
+                    qty=qty,
+                    reason=ExitReason.SCOUT_DEFENSIVE_REDUCE,
+                    event_type="SCOUT_DEFENSIVE_REDUCE",
+                    data=self._scout_event_data(
+                        position,
+                        price,
+                        candle,
+                        snapshot_1m=snapshot_1m,
+                        volume_ratio=volume_ratio,
+                        reason=weakness_reason,
+                    ),
+                )
+            ], False
+
+        stagnation = self._stagnation_action(position, max_r)
+        if stagnation is not None:
+            return [
+                self._scout_event(
+                    position, "SCOUT_INVALIDATED", price, candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                    reason=stagnation.reason.value if stagnation.reason else "STAGNATION",
+                ),
+                stagnation,
+            ], False
+        return [], False
+
+    def _scout_confirmed(
+        self,
+        position: Position,
+        atr: Decimal,
+        candle: Candle,
+        volume_ratio: Decimal | None,
+    ) -> bool:
+        c = self.cfg.position.scout_management
+        if volume_ratio is None or volume_ratio < Decimal(str(c.confirmation_volume_ratio)):
+            return False
+        m = metrics_of(candle)
+        if not m.valid:
+            return False
+        boundary = atr * Decimal(str(c.confirmation_boundary_atr))
+        if position.side == PositionSide.LONG and position.scout_entry_box_high is not None:
+            return (
+                candle.close > position.scout_entry_box_high + boundary
+                and m.close_position_in_range >= Decimal("0.65")
+            )
+        if position.side == PositionSide.SHORT and position.scout_entry_box_low is not None:
+            return (
+                candle.close < position.scout_entry_box_low - boundary
+                and m.close_position_in_range <= Decimal("0.35")
+            )
+        return False
+
+    def _scout_weakness_reason(
+        self,
+        position: Position,
+        candle: Candle,
+        snapshot_1m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+    ) -> str | None:
+        c = self.cfg.position.scout_management
+        if (
+            c.invalidate_on_box_mid_reclaim
+            and position.scout_entry_box_mid is not None
+        ):
+            if position.side == PositionSide.LONG and candle.close < position.scout_entry_box_mid:
+                return "BOX_MID_RECLAIMED_AGAINST_LONG"
+            if position.side == PositionSide.SHORT and candle.close > position.scout_entry_box_mid:
+                return "BOX_MID_RECLAIMED_AGAINST_SHORT"
+
+        ema_reason = self._scout_ema_reclaim_reason(position, candle, snapshot_1m)
+        if ema_reason is not None:
+            return ema_reason
+
+        if snapshot_1m is not None and snapshot_1m.rsi14 is not None:
+            if (
+                position.side == PositionSide.LONG
+                and snapshot_1m.rsi14 <= Decimal(str(c.long_invalid_rsi_threshold))
+            ):
+                return "RSI_WEAK_FOR_LONG_SCOUT"
+            if (
+                position.side == PositionSide.SHORT
+                and snapshot_1m.rsi14 >= Decimal(str(c.short_invalid_rsi_threshold))
+            ):
+                return "RSI_WEAK_FOR_SHORT_SCOUT"
+
+        return self._scout_strong_opposite_reason(position, candle, volume_ratio)
+
+    def _scout_ema_reclaim_reason(
+        self,
+        position: Position,
+        candle: Candle,
+        snapshot_1m: IndicatorSnapshot | None,
+    ) -> str | None:
+        c = self.cfg.position.scout_management
+        if snapshot_1m is None or snapshot_1m.ema20 is None:
+            return None
+        against = (
+            candle.close < snapshot_1m.ema20
+            if position.side == PositionSide.LONG
+            else candle.close > snapshot_1m.ema20
+        )
+        key = position.symbol
+        if against:
+            count = self._scout_ema_reclaim_counts.get(key, 0) + 1
+            self._scout_ema_reclaim_counts[key] = count
+            if count >= c.invalidate_on_ema20_reclaim_bars:
+                return "EMA20_RECLAIMED_AGAINST_SCOUT"
+        else:
+            self._scout_ema_reclaim_counts[key] = 0
+        return None
+
+    def _scout_strong_opposite_reason(
+        self,
+        position: Position,
+        candle: Candle,
+        volume_ratio: Decimal | None,
+    ) -> str | None:
+        if volume_ratio is None:
+            return None
+        c = self.cfg.position.scout_management
+        m = metrics_of(candle)
+        if not m.valid:
+            return None
+        if (
+            m.body_ratio < Decimal(str(c.strong_opposite_candle_body_ratio))
+            or volume_ratio < Decimal(str(c.strong_opposite_candle_volume_ratio))
+        ):
+            return None
+        if (
+            position.side == PositionSide.LONG
+            and candle.close < candle.open
+            and m.close_position_in_range <= Decimal("0.25")
+        ):
+            return "STRONG_BEARISH_CANDLE"
+        if (
+            position.side == PositionSide.SHORT
+            and candle.close > candle.open
+            and m.close_position_in_range >= Decimal("0.75")
+        ):
+            return "STRONG_BULLISH_CANDLE"
+        return None
+
+    def _scout_bars_since_entry(self, position: Position) -> int:
+        start = position.scout_entry_bar_index
+        if start is None:
+            return position.bars_since_entry
+        return max(0, position.bars_since_entry - start)
+
+    def _scout_event(
+        self,
+        position: Position,
+        event_type: str,
+        price: Decimal,
+        candle: Candle,
+        *,
+        snapshot_1m: IndicatorSnapshot | None = None,
+        volume_ratio: Decimal | None = None,
+        reason: str | None = None,
+    ) -> PositionAction:
+        return PositionAction(
+            type=PositionActionType.SCOUT_EVENT,
+            event_type=event_type,
+            data=self._scout_event_data(
+                position,
+                price,
+                candle,
+                snapshot_1m=snapshot_1m,
+                volume_ratio=volume_ratio,
+                reason=reason,
+            ),
+        )
+
+    def _scout_event_data(
+        self,
+        position: Position,
+        price: Decimal,
+        candle: Candle,
+        *,
+        snapshot_1m: IndicatorSnapshot | None = None,
+        volume_ratio: Decimal | None = None,
+        reason: str | None = None,
+    ) -> dict:
+        m = metrics_of(candle)
+        return {
+            "symbol": position.symbol,
+            "side": position.side.value,
+            "entry_price": str(position.avg_entry_price),
+            "current_price": str(price),
+            "scout_state": position.scout_state.value,
+            "bars_since_entry": self._scout_bars_since_entry(position),
+            "box_high": str(position.scout_entry_box_high)
+            if position.scout_entry_box_high is not None
+            else None,
+            "box_low": str(position.scout_entry_box_low)
+            if position.scout_entry_box_low is not None
+            else None,
+            "box_mid": str(position.scout_entry_box_mid)
+            if position.scout_entry_box_mid is not None
+            else None,
+            "scout_entry_level": str(position.scout_entry_level)
+            if position.scout_entry_level is not None
+            else None,
+            "scout_defensive_reduction_count": position.scout_defensive_reduction_count,
+            "reason": reason,
+            "rsi14": str(snapshot_1m.rsi14)
+            if snapshot_1m is not None and snapshot_1m.rsi14 is not None
+            else None,
+            "ema20": str(snapshot_1m.ema20)
+            if snapshot_1m is not None and snapshot_1m.ema20 is not None
+            else None,
+            "volume_ratio": str(volume_ratio) if volume_ratio is not None else None,
+            "body_ratio": str(m.body_ratio) if m.valid else None,
+            "close_position_in_range": str(m.close_position_in_range)
+            if m.valid
+            else None,
+        }
 
     # ------------------------------------------------------------------ #
     def _update_extremes(

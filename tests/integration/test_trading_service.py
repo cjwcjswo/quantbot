@@ -12,7 +12,7 @@ from apps.bot.workers.trading_pipeline import (
     PaperExecutor,
     TradingService,
 )
-from packages.core.enums import BotMode, BotState, PositionStatus
+from packages.core.enums import BotMode, BotState, PositionStatus, ScoutState
 from packages.core.enums import EntryMode, PositionSide, PositionSource, SignalDirection
 from packages.core.models import ExchangePosition, Position
 from packages.core.models import OrderBook, OrderBookLevel
@@ -50,6 +50,29 @@ def _candles():
     flats = [candle(interval="1", open_time_ms=i * 60_000, o="100", h="100.2",
                     l="99.8", c="100") for i in range(5)]
     return flats + [candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0")]
+
+
+def _scout_entry_snapshots():
+    return {
+        "15": snap(timeframe="15", close="100", ema20="99", ema50="98",
+                   slope="0.2", atr="1", atr_percent="1.5"),
+        "5": snap(timeframe="5", close="100.5", ema20="100", ema50="99",
+                  rsi="60", atr="1", atr_percent="1.5", volume_ratio="1.0"),
+        "1": snap(timeframe="1", close="100.4", ema20="100", atr="1",
+                  atr_percent="1.5", rsi="55", volume_ratio="2.0"),
+    }
+
+
+def _scout_entry_candles():
+    lows = ["99.8", "99.9", "100.0", "100.1"]
+    closes = ["100.1", "100.2", "100.3", "100.4"]
+    return [
+        candle(interval="1", open_time_ms=i * 60_000,
+               o=str(Decimal(close) - Decimal("0.1")),
+               h=str(Decimal(close) + Decimal("0.05")),
+               l=low, c=close)
+        for i, (low, close) in enumerate(zip(lows, closes))
+    ]
 
 
 def _short_retest_snapshots():
@@ -245,6 +268,33 @@ async def test_paper_entry_passes_with_no_guards(config):
     pos = await service.evaluate_entry(**_entry_kwargs())
     assert pos is not None
     assert pos.status == PositionStatus.ACTIVE
+
+
+async def test_scout_entry_starts_pending_state(config, events):
+    service = await _paper_service(config, events=events)
+
+    pos = await service.evaluate_entry(
+        symbol="BTCUSDT",
+        snapshots=_scout_entry_snapshots(),
+        candles_1m=_scout_entry_candles(),
+        box_high=Decimal("100.5"),
+        box_low=Decimal("98"),
+        symbol_meta=symbol_meta(symbol="BTCUSDT", min_qty="0.001"),
+        equity=Decimal("10000"),
+        entry_price=Decimal("100.4"),
+        best_bid=Decimal("100.39"),
+        best_ask=Decimal("100.4"),
+    )
+
+    assert pos is not None
+    assert pos.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+    assert pos.scout_state == ScoutState.SCOUT_PENDING
+    assert pos.scout_entry_box_high == Decimal("100.5")
+    assert pos.scout_entry_box_low == Decimal("98")
+    from packages.core.events import BotEventType
+    pending = events.of_type(BotEventType.SCOUT_PENDING_STARTED)
+    assert len(pending) == 1
+    assert pending[0].data["scout_state"] == "SCOUT_PENDING"
 
 
 # --- LIVE entry + TP/SL protection ----------------------------------------- #

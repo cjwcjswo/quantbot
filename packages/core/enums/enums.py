@@ -115,6 +115,15 @@ class PositionSource(StrEnum):
     EXTERNAL = "EXTERNAL"
 
 
+class ScoutState(StrEnum):
+    """Runtime state for PRE_BREAKOUT_SCOUT position management."""
+
+    NONE = "NONE"
+    SCOUT_PENDING = "SCOUT_PENDING"
+    SCOUT_CONFIRMED = "SCOUT_CONFIRMED"
+    ACTIVE_TREND = "ACTIVE_TREND"
+
+
 class EntryMode(StrEnum):
     """Entry timing mode (impl doc §11)."""
 
@@ -140,6 +149,7 @@ class ExitReason(StrEnum):
     TRAILING_STOP = "TRAILING_STOP"
     STAGNATION = "STAGNATION"
     SCENARIO_INVALID = "SCENARIO_INVALID"
+    SCOUT_DEFENSIVE_REDUCE = "SCOUT_DEFENSIVE_REDUCE"
     MAX_HOLDING_TIME = "MAX_HOLDING_TIME"
     MANUAL_CLOSE = "MANUAL_CLOSE"
     EMERGENCY_CLOSE = "EMERGENCY_CLOSE"

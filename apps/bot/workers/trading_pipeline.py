@@ -25,6 +25,7 @@ from packages.core.enums import (
     PositionSide,
     PositionSource,
     PositionStatus,
+    ScoutState,
     Side,
     SignalDirection,
 )
@@ -32,6 +33,7 @@ from packages.core.events import BotEvent, BotEventType
 from packages.core.models import Fill, IndicatorSnapshot, OrderBook, Position, SymbolMeta
 from packages.entry import EntryTimingEngine
 from packages.entry.entry_timing_engine import EntryContext
+from packages.entry.candle_metrics import metrics_of
 from packages.execution import PaperExecutionEngine
 from packages.position import PositionActionType, PositionManager
 from packages.risk import RiskContext, RiskDecision, RiskManager
@@ -573,6 +575,32 @@ class TradingService:
                 entry_mode=decision.entry_mode, signal_score=sig.score,
                 strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
                 breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
+                scout_state=ScoutState.SCOUT_PENDING
+                if (
+                    decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                    and self.cfg.position.scout_management.enabled
+                )
+                else ScoutState.NONE,
+                scout_entry_box_high=box_high
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
+                scout_entry_box_low=box_low
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
+                scout_entry_box_mid=(box_high + box_low) / Decimal("2")
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
+                scout_entry_level=box_high
+                if (
+                    decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                    and rd.side == PositionSide.LONG
+                )
+                else box_low
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
+                scout_entry_bar_index=0
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
             )
             self._state.positions[symbol] = pos
 
@@ -631,6 +659,49 @@ class TradingService:
                 data={k: v for k, v in opened_data.items() if v is not None},
             )
         )
+        if pos.scout_state == ScoutState.SCOUT_PENDING:
+            last_candle = candles_1m[-1] if candles_1m else None
+            metrics = metrics_of(last_candle) if last_candle is not None else None
+            snapshot_1m = snapshots["1"]
+            await self._emit(
+                BotEvent(
+                    type=BotEventType.SCOUT_PENDING_STARTED,
+                    symbol=symbol,
+                    data={
+                        "symbol": symbol,
+                        "side": pos.side.value,
+                        "entry_price": str(pos.avg_entry_price),
+                        "current_price": str(pos.avg_entry_price),
+                        "scout_state": pos.scout_state.value,
+                        "bars_since_entry": pos.bars_since_entry,
+                        "box_high": str(pos.scout_entry_box_high),
+                        "box_low": str(pos.scout_entry_box_low),
+                        "box_mid": str(pos.scout_entry_box_mid),
+                        "scout_entry_level": str(pos.scout_entry_level),
+                        "scout_defensive_reduction_count": (
+                            pos.scout_defensive_reduction_count
+                        ),
+                        "reason": "PRE_BREAKOUT_SCOUT_ENTRY",
+                        "rsi14": str(snapshot_1m.rsi14)
+                        if snapshot_1m.rsi14 is not None
+                        else None,
+                        "ema20": str(snapshot_1m.ema20)
+                        if snapshot_1m.ema20 is not None
+                        else None,
+                        "volume_ratio": str(snapshot_1m.volume_ratio)
+                        if snapshot_1m.volume_ratio is not None
+                        else None,
+                        "body_ratio": str(metrics.body_ratio)
+                        if metrics is not None and metrics.valid
+                        else None,
+                        "close_position_in_range": str(
+                            metrics.close_position_in_range
+                        )
+                        if metrics is not None and metrics.valid
+                        else None,
+                    },
+                )
+            )
         return pos
 
     def preview_watch(
@@ -689,6 +760,7 @@ class TradingService:
     async def manage(
         self, *, symbol: str, price: Decimal, atr: Decimal,
         best_bid: Decimal, best_ask: Decimal, candle_1m=None,
+        snapshot_1m: IndicatorSnapshot | None = None,
         snapshot_5m: IndicatorSnapshot | None = None,
         volume_ratio: Decimal | None = None,
         funding_rate: Decimal | None = None,
@@ -711,11 +783,14 @@ class TradingService:
                 return actions
         position_actions = self._positions.evaluate(
             pos, price=price, atr=atr, candle_1m=candle_1m,
-            snapshot_5m=snapshot_5m, volume_ratio=volume_ratio,
+            snapshot_1m=snapshot_1m, snapshot_5m=snapshot_5m,
+            volume_ratio=volume_ratio,
         )
         actions.extend(position_actions)
         for action in position_actions:
-            if action.type == PositionActionType.EXIT:
+            if action.type == PositionActionType.SCOUT_EVENT:
+                await self._emit_scout_action(pos, action)
+            elif action.type == PositionActionType.EXIT:
                 await self._close(pos, pos.qty, action.reason, best_bid, best_ask,
                                   full=True, prefer_limit=False)
             elif action.type == PositionActionType.PARTIAL_TP:
@@ -724,6 +799,7 @@ class TradingService:
             elif action.type == PositionActionType.REDUCE:
                 await self._close(pos, action.qty, action.reason, best_bid, best_ask,
                                   full=False, prefer_limit=False)
+                await self._emit_scout_action(pos, action)
             elif action.type == PositionActionType.TRAIL_UPDATE:
                 pos.stop_loss_price = action.new_stop
                 if self.mode == BotMode.LIVE and self._protection is not None:
@@ -735,6 +811,17 @@ class TradingService:
                         protection_status=self._position_protection_status(pos),
                     )
         return actions
+
+    async def _emit_scout_action(self, pos, action) -> None:
+        if action.event_type is None:
+            return
+        await self._emit(
+            BotEvent(
+                type=BotEventType(action.event_type),
+                symbol=pos.symbol,
+                data={k: v for k, v in (action.data or {}).items() if v is not None},
+            )
+        )
 
     async def _close(self, pos, qty, reason, best_bid, best_ask, *, full, prefer_limit):
         self._state.begin_position_update(pos.symbol)

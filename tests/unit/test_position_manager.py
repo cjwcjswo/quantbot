@@ -8,6 +8,7 @@ from packages.core.enums import (
     ExitReason,
     PositionSide,
     PositionStatus,
+    ScoutState,
 )
 from packages.core.models import Position
 from packages.position import PositionAction, PositionActionType, PositionManager
@@ -34,6 +35,29 @@ def _pos(
         take_profit_price=Decimal("102"),
         entry_mode=mode,
         bars_since_entry=bars,
+    )
+
+
+def _scout_pos(*, side=PositionSide.SHORT, bars=0):
+    box_high = Decimal("102")
+    box_low = Decimal("100")
+    return Position(
+        symbol="BTCUSDT",
+        side=side,
+        status=PositionStatus.ACTIVE,
+        qty=Decimal("10"),
+        avg_entry_price=Decimal("100"),
+        initial_risk_per_unit=Decimal("1"),
+        stop_loss_price=Decimal("101") if side == PositionSide.SHORT else Decimal("99"),
+        take_profit_price=Decimal("98") if side == PositionSide.SHORT else Decimal("102"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+        bars_since_entry=bars,
+        scout_state=ScoutState.SCOUT_PENDING,
+        scout_entry_box_high=box_high,
+        scout_entry_box_low=box_low,
+        scout_entry_box_mid=(box_high + box_low) / Decimal("2"),
+        scout_entry_level=box_low if side == PositionSide.SHORT else box_high,
+        scout_entry_bar_index=0,
     )
 
 
@@ -126,6 +150,110 @@ def test_scenario_invalid_after_two_closes_below_breakout_level(config):
     )
     assert second[0].type == PositionActionType.REDUCE
     assert second[0].reason == ExitReason.SCENARIO_INVALID
+
+
+def test_scout_pending_grace_skips_general_scenario_invalid(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=0)
+    invalid_5m = snap(timeframe="5", close="102", ema20="100", atr="1", valid=True)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("100.5"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="100.4", h="100.7", l="100.3", c="100.5"),
+        snapshot_5m=invalid_5m,
+    )
+
+    assert actions == []
+    assert pos.scout_state == ScoutState.SCOUT_PENDING
+    assert pos.scout_defensive_reduction_count == 0
+
+
+def test_short_scout_confirm_activates_active_trend(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=2)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("97.9"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99", h="99.2", l="97.8", c="97.9"),
+        volume_ratio=Decimal("1.2"),
+    )
+
+    assert pos.scout_state == ScoutState.ACTIVE_TREND
+    assert [a.event_type for a in actions if a.event_type] == [
+        "SCOUT_CONFIRMED",
+        "SCOUT_ACTIVATED",
+    ]
+
+
+def test_long_scout_confirm_activates_active_trend(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=2)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("102.2"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="101", h="102.3", l="100.9", c="102.2"),
+        volume_ratio=Decimal("1.2"),
+    )
+
+    assert pos.scout_state == ScoutState.ACTIVE_TREND
+    assert [a.event_type for a in actions if a.event_type] == [
+        "SCOUT_CONFIRMED",
+        "SCOUT_ACTIVATED",
+    ]
+
+
+def test_scout_pending_defensive_reduce_only_once(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=5)
+    weak = candle(o="100.8", h="101.3", l="100.7", c="101.2")
+
+    first = pm.evaluate(pos, price=Decimal("101.2"), atr=Decimal("1"), candle_1m=weak)
+    second = pm.evaluate(pos, price=Decimal("101.2"), atr=Decimal("1"), candle_1m=weak)
+
+    assert first[0].type == PositionActionType.REDUCE
+    assert first[0].qty == Decimal("5.0")
+    assert first[0].reason == ExitReason.SCOUT_DEFENSIVE_REDUCE
+    assert first[0].event_type == "SCOUT_DEFENSIVE_REDUCE"
+    assert pos.scout_defensive_reduction_count == 1
+    assert all(a.type != PositionActionType.REDUCE for a in second)
+
+
+def test_scout_defensive_reduce_does_not_stack_with_stagnation(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=7)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("101.2"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="100.8", h="101.3", l="100.7", c="101.2"),
+    )
+
+    assert [a.type for a in actions] == [PositionActionType.REDUCE]
+
+
+def test_active_trend_scout_uses_general_scenario_invalid(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=3)
+    pos.scout_state = ScoutState.ACTIVE_TREND
+    invalid_5m = snap(timeframe="5", close="102", ema20="100", atr="1", valid=True)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("100.5"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="100.4", h="100.7", l="100.3", c="100.5"),
+        snapshot_5m=invalid_5m,
+    )
+
+    assert actions[0].type == PositionActionType.REDUCE
+    assert actions[0].reason == ExitReason.SCENARIO_INVALID
 
 
 def test_external_position_not_managed(config):
