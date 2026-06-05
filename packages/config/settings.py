@@ -114,8 +114,14 @@ class PreBreakoutEntry(_Section):
     min_score: int = 6
     position_fraction: float = 0.30
     stop_atr: float = 0.7
-    min_volume_ratio: float = 0.9
+    min_volume_ratio: float = 0.8
     max_distance_to_box_atr: float = 0.45
+    require_compression: bool = False
+    compression_bonus_score: int = 2
+    compression_min_score: int | None = 6
+    no_compression_min_score: int | None = 7
+    compression_position_fraction: float | None = 0.30
+    no_compression_position_fraction: float | None = 0.20
     long_rsi_min: float = 46
     long_rsi_max: float = 64
     short_rsi_min: float = 36

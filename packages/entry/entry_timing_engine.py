@@ -51,6 +51,18 @@ class EntryDecision:
     stop_atr: Decimal
     score: Decimal
     reason: str
+    compression_mode: str | None = None
+    has_compression: bool | None = None
+    required_score: Decimal | None = None
+    compression_bonus_applied: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class ScoutCompression:
+    has_compression: bool
+    bonus_applied: Decimal
+    mode: str
+    ratio: Decimal | None = None
 
 
 class EntryTimingEngine:
@@ -239,20 +251,38 @@ class EntryTimingEngine:
         atr1: Decimal,
         is_long: bool,
     ) -> EntryDecision | None:
-        reason = self._scout_condition_reason(ctx, last, atr1, is_long)
+        compression = self._scout_compression(ctx)
+        score = self._scout_score(ctx, last, atr1, is_long, compression)
+        required_score = self._scout_required_score(compression.has_compression)
+        position_fraction = self._scout_position_fraction(compression.has_compression)
+        meta = self._scout_log_meta(
+            compression=compression,
+            score=score,
+            required_score=required_score,
+            position_fraction=position_fraction,
+        )
+        reason = self._scout_condition_reason(
+            ctx, last, atr1, is_long, compression
+        )
         if reason is not None:
             self._record_no_entry(
                 "entry_timing",
                 reason,
                 entry_mode_candidate=EntryMode.PRE_BREAKOUT_SCOUT.value,
+                **meta,
             )
             return None
-        score = self._scout_score(ctx, last, atr1, is_long)
-        if score < Decimal(str(self.cfg.entry.pre_breakout.min_score)):
+        if score < required_score:
+            reason_code = (
+                "SCOUT_SCORE_TOO_LOW"
+                if compression.has_compression
+                else "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION"
+            )
             self._record_no_entry(
                 "entry_timing",
-                "SCOUT_SCORE_TOO_LOW",
+                reason_code,
                 entry_mode_candidate=EntryMode.PRE_BREAKOUT_SCOUT.value,
+                **meta,
             )
             return None
         e = self.cfg.entry.pre_breakout
@@ -260,22 +290,29 @@ class EntryTimingEngine:
             symbol=ctx.symbol,
             direction=ctx.direction,
             entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
-            position_fraction=Decimal(str(e.position_fraction)),
+            position_fraction=position_fraction,
             stop_atr=Decimal(str(e.stop_atr)),
             score=score,
-            reason="pre-breakout scout",
+            reason=f"pre-breakout scout {compression.mode.lower()}",
+            compression_mode=compression.mode,
+            has_compression=compression.has_compression,
+            required_score=required_score,
+            compression_bonus_applied=compression.bonus_applied,
         )
 
     def _scout_condition_reason(
-        self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool
+        self,
+        ctx: EntryContext,
+        last: Candle,
+        atr1: Decimal,
+        is_long: bool,
+        compression: ScoutCompression,
     ) -> str | None:
         rsi = ctx.snapshot_1m.rsi14
         vol = ctx.snapshot_1m.volume_ratio
         if rsi is None or vol is None:
             return "SCOUT_DATA_MISSING"
-        atr20 = avg_true_range(ctx.candles_1m, 20)
-        atr100 = avg_true_range(ctx.candles_1m, 100)
-        if atr20 is None or atr100 is None or atr20 >= atr100:  # compression required
+        if self.cfg.entry.pre_breakout.require_compression and not compression.has_compression:
             return "SCOUT_NO_COMPRESSION"
         scout = self.cfg.entry.pre_breakout
         exhaustion_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
@@ -304,10 +341,18 @@ class EntryTimingEngine:
     def _scout_conditions(
         self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool
     ) -> bool:
-        return self._scout_condition_reason(ctx, last, atr1, is_long) is None
+        compression = self._scout_compression(ctx)
+        return self._scout_condition_reason(
+            ctx, last, atr1, is_long, compression
+        ) is None
 
     def _scout_score(
-        self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool
+        self,
+        ctx: EntryContext,
+        last: Candle,
+        atr1: Decimal,
+        is_long: bool,
+        compression: ScoutCompression | None = None,
     ) -> Decimal:
         """Transparent 0..10 confidence (the doc fixes min_score=8 but not the
         formula). Points reward trend strength, slope, RSI position, proximity to
@@ -346,12 +391,8 @@ class EntryTimingEngine:
         elif dist <= Decimal(str(scout.score_mid_box_atr)) * atr1:
             score += Decimal(1)
 
-        # volatility compression
-        atr20 = avg_true_range(ctx.candles_1m, 20)
-        atr100 = avg_true_range(ctx.candles_1m, 100)
-        if atr20 is not None and atr100 is not None and atr100 > 0:
-            ratio = atr20 / atr100
-            score += Decimal(2) if ratio <= Decimal(str(scout.score_compression_ratio)) else Decimal(1)
+        compression = compression or self._scout_compression(ctx)
+        score += compression.bonus_applied
 
         # volume
         vol = ctx.snapshot_1m.volume_ratio
@@ -359,3 +400,67 @@ class EntryTimingEngine:
             score += Decimal(2) if vol >= Decimal(str(scout.score_high_volume_ratio)) else Decimal(1)
 
         return min(score, Decimal(10))
+
+    def _scout_compression(self, ctx: EntryContext) -> ScoutCompression:
+        scout = self.cfg.entry.pre_breakout
+        atr20 = avg_true_range(ctx.candles_1m, 20)
+        atr100 = avg_true_range(ctx.candles_1m, 100)
+        has_compression = (
+            atr20 is not None
+            and atr100 is not None
+            and atr100 > 0
+            and atr20 < atr100
+        )
+        bonus = (
+            Decimal(str(scout.compression_bonus_score))
+            if has_compression
+            else Decimal("0")
+        )
+        ratio = atr20 / atr100 if atr20 is not None and atr100 and atr100 > 0 else None
+        return ScoutCompression(
+            has_compression=has_compression,
+            bonus_applied=bonus,
+            mode="WITH_COMPRESSION" if has_compression else "WITHOUT_COMPRESSION",
+            ratio=ratio,
+        )
+
+    def _scout_required_score(self, has_compression: bool) -> Decimal:
+        scout = self.cfg.entry.pre_breakout
+        if has_compression:
+            value = scout.compression_min_score
+            if value is None:
+                value = scout.min_score
+        else:
+            value = scout.no_compression_min_score
+            if value is None:
+                value = scout.min_score + 1
+        return Decimal(str(value))
+
+    def _scout_position_fraction(self, has_compression: bool) -> Decimal:
+        scout = self.cfg.entry.pre_breakout
+        if has_compression:
+            value = scout.compression_position_fraction
+            if value is None:
+                value = scout.position_fraction
+            return Decimal(str(value))
+        value = scout.no_compression_position_fraction
+        if value is None:
+            return min(Decimal(str(scout.position_fraction)), Decimal("0.20"))
+        return Decimal(str(value))
+
+    @staticmethod
+    def _scout_log_meta(
+        *,
+        compression: ScoutCompression,
+        score: Decimal,
+        required_score: Decimal,
+        position_fraction: Decimal,
+    ) -> dict:
+        return {
+            "has_compression": compression.has_compression,
+            "compression_bonus_applied": str(compression.bonus_applied),
+            "scout_score": str(score),
+            "required_scout_score": str(required_score),
+            "position_fraction": str(position_fraction),
+            "compression_mode": compression.mode,
+        }

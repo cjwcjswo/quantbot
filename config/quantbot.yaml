@@ -78,8 +78,14 @@ entry:
     min_score: 6
     position_fraction: 0.30
     stop_atr: 0.7
-    min_volume_ratio: 0.9
+    min_volume_ratio: 0.8
     max_distance_to_box_atr: 0.45
+    require_compression: false
+    compression_bonus_score: 2
+    compression_min_score: 6
+    no_compression_min_score: 7
+    compression_position_fraction: 0.30
+    no_compression_position_fraction: 0.20
     long_rsi_min: 46
     long_rsi_max: 64
     short_rsi_min: 36

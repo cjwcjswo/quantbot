@@ -42,6 +42,16 @@ def test_happy_path_approved(config):
     assert d.leverage >= Decimal("1")
 
 
+def test_position_fraction_reduces_sizing(config):
+    full = _approve(config, decision=_decision(frac="0.30"))
+    reduced = _approve(config, decision=_decision(frac="0.20"))
+
+    assert full.approved
+    assert reduced.approved
+    assert full.qty == Decimal("30")
+    assert reduced.qty == Decimal("20")
+
+
 def test_tpsl_prices_are_rounded_to_tick(config):
     d = _approve(
         config,

@@ -597,9 +597,33 @@ class TradingService:
                 pos, mode=self.mode.value, strategy_id=sig.strategy,
                 protection_status=protection,
             )
-        await self._emit(BotEvent(type=BotEventType.POSITION_OPENED, symbol=symbol,
-                                  data={"qty": str(pos.qty), "entry": str(pos.avg_entry_price),
-                                        "mode": decision.entry_mode.value}))
+        opened_data = {
+            "qty": str(pos.qty),
+            "entry": str(pos.avg_entry_price),
+            "mode": decision.entry_mode.value,
+            "position_fraction": str(decision.position_fraction),
+        }
+        if decision.compression_mode is not None:
+            opened_data.update(
+                {
+                    "compression_mode": decision.compression_mode,
+                    "has_compression": decision.has_compression,
+                    "scout_score": str(decision.score),
+                    "required_scout_score": str(decision.required_score)
+                    if decision.required_score is not None
+                    else None,
+                    "compression_bonus_applied": str(decision.compression_bonus_applied)
+                    if decision.compression_bonus_applied is not None
+                    else None,
+                }
+            )
+        await self._emit(
+            BotEvent(
+                type=BotEventType.POSITION_OPENED,
+                symbol=symbol,
+                data={k: v for k, v in opened_data.items() if v is not None},
+            )
+        )
         return pos
 
     def preview_watch(

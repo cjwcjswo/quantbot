@@ -137,6 +137,30 @@ def _scout_candles():
     return candles
 
 
+def _scout_candles_no_compression():
+    candles = []
+    for i in range(100):
+        candles.append(
+            candle(interval="1", open_time_ms=i * 60_000,
+                   o="100", h="100.1", l="99.9", c="100")
+        )
+    for i in range(100, 116):
+        candles.append(
+            candle(interval="1", open_time_ms=i * 60_000,
+                   o="100", h="100.5", l="99.5", c="100")
+        )
+    lows = ["100.0", "100.05", "100.1", "100.2"]
+    closes = ["100.15", "100.2", "100.3", "100.4"]
+    for j, (lo, cl) in enumerate(zip(lows, closes)):
+        opn = str(Decimal(cl) - Decimal("0.1"))
+        hi = str(Decimal(cl) + Decimal("0.05"))
+        candles.append(
+            candle(interval="1", open_time_ms=(116 + j) * 60_000,
+                   o=opn, h=hi, l=lo, c=cl)
+        )
+    return candles
+
+
 def test_scout_entry(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles()
@@ -150,14 +174,34 @@ def test_scout_entry(config):
     assert decision.position_fraction == Decimal("0.30")
     assert decision.stop_atr == Decimal("0.7")
     assert decision.score >= Decimal("6")
+    assert decision.compression_mode == "WITH_COMPRESSION"
 
 
-def test_scout_threshold_blocks_low_score(config):
+def test_scout_with_compression_score_6_allowed(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles()
+    ctx = _ctx(
+        candles_1m=candles, box_high="100.7",
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.9", "atr": "1"},
+    )
+    ctx.snapshot_15m = snap(timeframe="15", close="100", ema20="100.05", ema50="100",
+                            slope="0.01", atr="1", atr_percent="1.5",
+                            volume_ratio="1.0")
+    decision = eng.evaluate(ctx)
+    assert decision is not None
+    assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+    assert decision.position_fraction == Decimal("0.30")
+    assert decision.score == Decimal("6")
+    assert decision.required_score == Decimal("6")
+    assert decision.compression_mode == "WITH_COMPRESSION"
+
+
+def test_scout_with_compression_score_5_blocks(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles()
     ctx = _ctx(
         candles_1m=candles, box_high="100.8",
-        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.9", "atr": "1"},
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.8", "atr": "1"},
     )
     ctx.snapshot_15m = snap(timeframe="15", close="100", ema20="100.05", ema50="100",
                             slope="0.01", atr="1", atr_percent="1.5",
@@ -165,6 +209,56 @@ def test_scout_threshold_blocks_low_score(config):
     decision = eng.evaluate(ctx)
     assert decision is None
     assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW"
+    assert eng.last_no_entry_reason["has_compression"] is True
+    assert eng.last_no_entry_reason["required_scout_score"] == "6"
+
+
+def test_scout_without_compression_score_7_allowed_smaller_fraction(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles_no_compression()
+    ctx = _ctx(
+        candles_1m=candles, box_high="100.6",
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.8", "atr": "1"},
+    )
+    decision = eng.evaluate(ctx)
+    assert decision is not None
+    assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+    assert decision.position_fraction == Decimal("0.20")
+    assert decision.score == Decimal("7")
+    assert decision.required_score == Decimal("7")
+    assert decision.compression_mode == "WITHOUT_COMPRESSION"
+    assert decision.compression_bonus_applied == Decimal("0")
+
+
+def test_scout_without_compression_score_6_blocks(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles_no_compression()
+    ctx = _ctx(
+        candles_1m=candles, box_high="100.7",
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.8", "atr": "1"},
+    )
+    decision = eng.evaluate(ctx)
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION"
+    assert eng.last_no_entry_reason["has_compression"] is False
+    assert eng.last_no_entry_reason["scout_score"] == "6"
+    assert eng.last_no_entry_reason["required_scout_score"] == "7"
+    assert eng.last_no_entry_reason["position_fraction"] == "0.2"
+    assert eng.last_no_entry_reason["compression_mode"] == "WITHOUT_COMPRESSION"
+
+
+def test_scout_without_compression_still_respects_anti_chase(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles_no_compression()
+    ctx = _ctx(
+        candles_1m=candles, box_high="100.8",
+        s1_kwargs={"ema20": "98", "rsi": "55", "volume_ratio": "2.0", "atr": "1"},
+    )
+    decision = eng.evaluate(ctx)
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "ANTI_CHASE_LONG"
+    assert eng.last_no_entry_reason["anti_chase_reason"] == "PRICE_FAR_ABOVE_EMA"
+    assert eng.last_no_entry_reason["compression_mode"] == "WITHOUT_COMPRESSION"
 
 
 def test_retest_tolerance_uses_config(config):

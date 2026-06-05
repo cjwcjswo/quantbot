@@ -31,6 +31,10 @@ def test_loads_repo_config():
     assert cfg.reconciliation.interval_sec_when_flat == 10
     assert cfg.api.app_env == "production"
     assert cfg.entry.pre_breakout.min_score == 6
+    assert cfg.entry.pre_breakout.min_volume_ratio == 0.8
+    assert cfg.entry.pre_breakout.require_compression is False
+    assert cfg.entry.pre_breakout.no_compression_min_score == 7
+    assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.20
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 
 

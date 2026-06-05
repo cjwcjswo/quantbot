@@ -211,6 +211,9 @@ def _relaxation_candidates(reasons: list[str], stages: list[str]) -> list[dict]:
         "ANTI_CHASE_LONG": "entry.anti_chase long-side thresholds",
         "ANTI_CHASE_SHORT": "entry.anti_chase short-side thresholds",
         "SCOUT_SCORE_TOO_LOW": "entry.pre_breakout.min_score",
+        "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION": (
+            "entry.pre_breakout.no_compression_min_score or no_compression_position_fraction"
+        ),
         "SCOUT_TOO_FAR_FROM_BOX": "entry.pre_breakout.max_distance_to_box_atr",
         "RETEST_TOO_FAR_FROM_LEVEL": "entry.retest_confirm.retest_tolerance_atr",
         "RISK_REJECTED": "risk limits and open position exposure",
