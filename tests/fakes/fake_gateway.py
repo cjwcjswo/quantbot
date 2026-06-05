@@ -43,11 +43,15 @@ class FakeGateway:
             wallet_balance=equity,
         )
         # call log for assertions
+        self.ticker_calls: int = 0
         self.placed_orders: list[OrderRequest] = []
         self.cancelled: list[tuple[str, str | None, str | None]] = []
+        self.kline_calls: list[tuple[str, str, int]] = []
+        self.orderbook_calls: list[tuple[str, int]] = []
         # behavior knobs
         self.fill_ratio: Decimal = Decimal("1")  # fraction of qty filled
         self.disable_tpsl: bool = False  # when True, set_trading_stop is a no-op
+        self.tpsl_override_on_set: tuple[Decimal | None, Decimal | None] | None = None
         self.server_time_ms: int = 0  # for clock-sync tests
         self._order_seq = 0
 
@@ -75,12 +79,15 @@ class FakeGateway:
         return list(self.instruments)
 
     async def get_tickers(self) -> list[MarketTicker]:
+        self.ticker_calls += 1
         return list(self.tickers.values())
 
     async def get_kline(self, symbol: str, interval: str, limit: int) -> list[Candle]:
+        self.kline_calls.append((symbol, interval, limit))
         return list(self.klines.get((symbol, interval), []))[-limit:]
 
     async def get_orderbook(self, symbol: str, depth: int) -> OrderBook:
+        self.orderbook_calls.append((symbol, depth))
         return self.orderbooks.get(symbol, OrderBook(symbol=symbol))
 
     async def get_wallet_balance(self) -> WalletBalance:
@@ -216,13 +223,14 @@ class FakeGateway:
         if self.disable_tpsl:
             # Simulate the exchange not registering TP/SL (verify will fail).
             return TradingStopResult(symbol=request.symbol, success=True)
-        self._tpsl[request.symbol] = (request.take_profit, request.stop_loss)
+        tp, sl = self.tpsl_override_on_set or (request.take_profit, request.stop_loss)
+        self._tpsl[request.symbol] = (tp, sl)
         pos = self.positions.get(request.symbol)
         if pos and pos.side is not None:
             self.positions[request.symbol] = pos.model_copy(
                 update={
-                    "take_profit": request.take_profit,
-                    "stop_loss": request.stop_loss,
+                    "take_profit": tp,
+                    "stop_loss": sl,
                 }
             )
         from packages.core.models import TradingStopResult

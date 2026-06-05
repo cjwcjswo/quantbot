@@ -61,6 +61,18 @@ async def test_protect_verify_fail_emergency_close_order_locked(config, events):
     assert gw.placed_orders[-1].reduce_only is True
 
 
+async def test_protect_rejects_mismatched_tpsl_values(config, events):
+    gw = FakeGateway()
+    gw.tpsl_override_on_set = (Decimal("103"), Decimal("99"))
+    gw.fill_ratio = Decimal("1")
+    ppm = _ppm(config, gw, events)
+    pos = _position()
+    result = await ppm.protect(pos)
+    assert not result.protected
+    assert result.reason == "ORDER_LOCKED"
+    assert BotEventType.EMERGENCY_TPSL_FAILED in events.types()
+
+
 async def test_protect_emergency_close_fail_emergency_stop(config, events):
     gw = FakeGateway()
     gw.disable_tpsl = True

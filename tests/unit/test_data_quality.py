@@ -30,7 +30,9 @@ def test_good_data_passes(config):
 def test_stale_kline_blocks(config):
     g = DataQualityGuard(config.data_quality)
     kw = _base_kwargs()
-    kw["last_kline_ms"] = kw["now_ms"] - 6000  # > 5s
+    kw["last_kline_ms"] = (
+        kw["now_ms"] - (config.data_quality.max_kline_delay_sec + 1) * 1000
+    )
     assert g.check(**kw) == "KLINE_DELAY"
 
 

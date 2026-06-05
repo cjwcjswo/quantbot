@@ -16,6 +16,7 @@ export function CommandBar() {
   const [stopConfirmText, setStopConfirmText] = useState("");
 
   const state = data?.state;
+  const mode = data?.mode;
   const isRunning = state === "RUNNING";
   const isPaused = state === "PAUSED";
   const locked = state === "EMERGENCY_STOP" || state === "RISK_LOCKED" || state === "ORDER_LOCKED";
@@ -29,18 +30,17 @@ export function CommandBar() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <Button
-        variant="primary"
+        variant={mode === "LIVE" ? "danger" : "primary"}
         disabled={!canStart || cmd.isPending}
-        onClick={() => cmd.mutate({ kind: "start", mode: "PAPER", liveConfirm: false })}
+        onClick={() => {
+          if (mode === "LIVE") {
+            setDialog("startLive");
+            return;
+          }
+          cmd.mutate({ kind: "start", liveConfirm: false });
+        }}
       >
-        PAPER 시작
-      </Button>
-      <Button
-        variant="danger"
-        disabled={!canStart || cmd.isPending}
-        onClick={() => setDialog("startLive")}
-      >
-        LIVE 시작
+        {mode === "LIVE" ? "LIVE 시작" : "시작"}
       </Button>
       <Button variant="danger-outline" disabled={cmd.isPending} onClick={() => setDialog("stop")}>
         정지
@@ -76,7 +76,7 @@ export function CommandBar() {
         requireText="LIVE"
         onCancel={() => setDialog("none")}
         onConfirm={() => {
-          cmd.mutate({ kind: "start", mode: "LIVE", liveConfirm: true });
+          cmd.mutate({ kind: "start", liveConfirm: true });
           setDialog("none");
         }}
       />

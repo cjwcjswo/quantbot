@@ -116,11 +116,31 @@ class PositionProtectionManager:
         pp = self.cfg.position_protection
         for attempt in range(pp.verify_tpsl_retry_count):
             state = await self._gw.get_position_tpsl(position.symbol)
-            if state.is_protected:
+            if self._matches_requested_tpsl(position, state):
                 return True
             if attempt < pp.verify_tpsl_retry_count - 1:
                 await self._sleep(pp.verify_tpsl_retry_interval_sec)
         return False
+
+    def _matches_requested_tpsl(self, position: Position, state) -> bool:
+        if (
+            not state.is_protected
+            or position.take_profit_price is None
+            or position.stop_loss_price is None
+        ):
+            return False
+
+        tolerance = Decimal(str(self.cfg.position_protection.tpsl_verify_tolerance_percent))
+
+        def close_enough(actual: Decimal | None, expected: Decimal) -> bool:
+            if actual is None:
+                return False
+            allowed = abs(expected) * tolerance / Decimal("100")
+            return abs(actual - expected) <= allowed
+
+        return close_enough(
+            state.take_profit, position.take_profit_price
+        ) and close_enough(state.stop_loss, position.stop_loss_price)
 
     async def _emergency_close(self, position: Position) -> ProtectionResult:
         """TP/SL missing => flatten with reduce-only MARKET (impl doc §5.5, §17.3)."""

@@ -21,31 +21,34 @@ async def _count(sf, model) -> int:
         return (await s.execute(select(func.count()).select_from(model))).scalar_one()
 
 
-async def test_start_paper_writes_log_then_publishes(client, redis, session_factory):
+async def test_start_writes_log_then_publishes(client, redis, session_factory):
     await redis.set("bot:status", "STANDBY")
-    r = await client.post("/bot/start", json={"mode": "PAPER"})
+    await redis.set("bot:mode", "PAPER")
+    r = await client.post("/bot/start", json={})
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "PENDING"
-    assert len(await _queue(redis)) == 1
+    q = await _queue(redis)
+    assert len(q) == 1
+    assert '"payload":{}' in q[0]
     assert await _count(session_factory, CommandLogRow) == 1
 
 
 async def test_start_live_requires_confirm(client, redis):
-    await set_alive(redis, state="STANDBY")
-    r = await client.post("/bot/start", json={"mode": "LIVE"})
+    await set_alive(redis, state="STANDBY", mode="LIVE")
+    r = await client.post("/bot/start", json={})
     assert r.status_code == 422
     assert r.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 async def test_start_live_confirm_ok(client, redis):
-    await set_alive(redis, state="STANDBY")
-    r = await client.post("/bot/start", json={"mode": "LIVE", "live_confirm": True})
+    await set_alive(redis, state="STANDBY", mode="LIVE")
+    r = await client.post("/bot/start", json={"live_confirm": True})
     assert r.status_code == 200
 
 
 async def test_start_conflict_when_running(client, redis):
     await set_alive(redis, state="RUNNING")
-    r = await client.post("/bot/start", json={"mode": "PAPER"})
+    r = await client.post("/bot/start", json={})
     assert r.status_code == 409
     assert r.json()["error"]["code"] == "CONFLICT"
 
@@ -91,7 +94,8 @@ async def test_sync_allowed_when_stale(client, redis):
 
 async def test_command_status_lookup(client, redis):
     await redis.set("bot:status", "STANDBY")
-    start = await client.post("/bot/start", json={"mode": "PAPER"})
+    await redis.set("bot:mode", "PAPER")
+    start = await client.post("/bot/start", json={})
     cid = start.json()["data"]["command_id"]
     r = await client.get(f"/commands/{cid}")
     assert r.status_code == 200
@@ -122,11 +126,12 @@ async def test_db_down_blocks_publish(redis, config):
         return BoomSession()
 
     await redis.set("bot:status", "STANDBY")
+    await redis.set("bot:mode", "PAPER")
     app = create_app(session_factory=boom_sf, redis=redis, config=config,
                      api_settings=ApiSettings(api_run_maintenance=False),
                      start_stream=False)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        r = await c.post("/bot/start", json={"mode": "PAPER"})
+        r = await c.post("/bot/start", json={})
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "DATABASE_ERROR"
     # nothing published
@@ -139,8 +144,9 @@ async def test_redis_publish_failure_returns_503(app, client, redis, session_fac
             raise RuntimeError("redis down")
 
     await redis.set("bot:status", "STANDBY")
+    await redis.set("bot:mode", "PAPER")
     app.state.command_queue = BoomQueue()
-    r = await client.post("/bot/start", json={"mode": "PAPER"})
+    r = await client.post("/bot/start", json={})
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "COMMAND_QUEUE_UNAVAILABLE"
     # the audit log was still written before the publish attempt

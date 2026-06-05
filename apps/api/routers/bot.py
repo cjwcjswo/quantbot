@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends
 
 from apps.api import errors
 from apps.api.dependencies import (
+    get_config,
     get_api_settings,
     get_command_queue,
     get_redis,
@@ -19,7 +20,7 @@ from apps.api.responses import ok
 from apps.api.schemas.bot import PauseReq, ResumeReq, StartReq, StopReq
 from apps.api.services import bot_status_service, command_service
 from packages.core.enums import BotMode
-from packages.messaging import CommandType
+from packages.messaging import CommandType, state_keys
 
 router = APIRouter(tags=["bot"])
 
@@ -52,6 +53,7 @@ async def bot_status(
 @router.post("/bot/start", dependencies=[Depends(require_auth)])
 async def bot_start(
     body: StartReq,
+    config: Any = Depends(get_config),
     redis: Any = Depends(get_redis),
     settings: Any = Depends(get_api_settings),
     session_factory: Any = Depends(get_session_factory),
@@ -62,7 +64,10 @@ async def bot_start(
         raise errors.conflict("Bot is already running.")
     if state not in (None, "STANDBY", "PAUSED", "STOPPED"):
         raise errors.command_rejected(f"Cannot start from state {state}.")
-    if body.mode == BotMode.LIVE:
+    mode = await redis.get(state_keys.BOT_MODE)
+    if mode is None:
+        mode = config.bot.mode.value
+    if mode == BotMode.LIVE.value:
         if not body.live_confirm:
             raise errors.ApiError(
                 errors.ErrorCode.VALIDATION_ERROR,
@@ -71,7 +76,7 @@ async def bot_start(
             raise errors.bot_not_running("Bot heartbeat is stale; cannot start LIVE.")
     result = await command_service.dispatch(
         session_factory=session_factory, command_queue=command_queue,
-        type=CommandType.START_BOT, payload={"mode": body.mode.value})
+        type=CommandType.START_BOT, payload={})
     return ok(result)
 
 

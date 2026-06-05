@@ -16,7 +16,7 @@ from decimal import Decimal
 from packages.core.enums import SignalDirection
 from packages.core.models import IndicatorSnapshot, Signal
 
-# Display thresholds, mirroring EntryTimingEngine scout distances (impl doc §11.1).
+# Display defaults, overridden by EntryTimingEngine scout config when provided.
 _NEAR_ATR = Decimal("0.20")
 _SCOUT_ATR = Decimal("0.35")
 
@@ -42,6 +42,8 @@ def _readiness(
     boundary: Decimal,
     atr1: Decimal | None,
     margin_atr: Decimal,
+    near_atr: Decimal,
+    scout_atr: Decimal,
 ) -> tuple[str, Decimal | None]:
     """Return (readiness, remaining_distance_in_atr).
 
@@ -55,9 +57,9 @@ def _readiness(
     dist_atr = remaining / atr1
     if dist_atr < -margin_atr:
         readiness = "BREAKOUT"
-    elif dist_atr <= _NEAR_ATR:
+    elif dist_atr <= near_atr:
         readiness = "NEAR"
-    elif dist_atr <= _SCOUT_ATR:
+    elif dist_atr <= scout_atr:
         readiness = "SCOUT_ZONE"
     else:
         readiness = "WATCHING"
@@ -74,6 +76,8 @@ def build_watch_entry(
     box_low: Decimal,
     last_price: Decimal,
     breakout_margin_atr: Decimal,
+    near_zone_atr: Decimal | None = None,
+    scout_zone_atr: Decimal | None = None,
     now_ms: int | None = None,
 ) -> dict:
     """Build one JSON-serializable watch-list entry for ``symbol``.
@@ -93,6 +97,8 @@ def build_watch_entry(
         readiness, dist_atr = _readiness(
             is_long=is_long, last_price=last_price, boundary=boundary,
             atr1=atr1, margin_atr=breakout_margin_atr,
+            near_atr=near_zone_atr or _NEAR_ATR,
+            scout_atr=scout_zone_atr or _SCOUT_ATR,
         )
         remaining = (boundary - last_price) if is_long else (last_price - boundary)
         dist_pct = (

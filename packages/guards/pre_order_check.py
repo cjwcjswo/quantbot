@@ -1,12 +1,7 @@
 """Pre-order Check (impl doc §16): final gate immediately before a LIVE order.
 
-```
-spread_percent <= 0.08
-expected_slippage_percent <= 0.05
-depth within +/-0.1% >= order_notional * 3
-symbol status == Trading
-clock drift <= 1000ms
-```
+The spread, slippage, order-book depth band/multiple, symbol status and clock
+drift gates are driven by YAML config.
 Returns a reason string when the order must be blocked, else None.
 """
 
@@ -25,7 +20,8 @@ class PreOrderCheck:
         self.cfg = config
         self.max_spread = Decimal(str(config.scanner.max_spread_percent))
         self.max_slippage = Decimal(str(config.orders.max_slippage_percent))
-        self.depth_multiple = Decimal(3)
+        self.depth_multiple = Decimal(str(config.orders.pre_order_depth_multiple))
+        self.depth_band = Decimal(str(config.orders.pre_order_depth_band_percent))
 
     def check(
         self,
@@ -53,7 +49,7 @@ class PreOrderCheck:
         if expected_slippage_percent > self.max_slippage:
             return "SLIPPAGE_TOO_HIGH"
 
-        depth = depth_usdt_within(orderbook, Decimal("0.1"))
+        depth = depth_usdt_within(orderbook, self.depth_band)
         if depth < order_notional * self.depth_multiple:
             return "INSUFFICIENT_DEPTH"
 

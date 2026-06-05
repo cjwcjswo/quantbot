@@ -330,21 +330,19 @@ PAPER START:
 
 ```text
 1. 사용자가 START 클릭
-2. mode=PAPER 선택
-3. POST /bot/start 호출
-4. command_id 표시
-5. Bot 상태가 START_REQUESTED / SYNCING / RUNNING으로 변하는 것을 WebSocket으로 반영
+2. POST /bot/start 호출
+3. command_id 표시
+4. Bot 상태가 START_REQUESTED / SYNCING / RUNNING으로 변하는 것을 WebSocket으로 반영
 ```
 
 LIVE START:
 
 ```text
 1. 사용자가 START 클릭
-2. mode=LIVE 선택
-3. ConfirmDialog 표시
-4. 사용자가 LIVE 입력
-5. POST /bot/start { mode: "LIVE", live_confirm: true }
-6. command_id 표시
+2. 현재 설정 mode가 LIVE이면 ConfirmDialog 표시
+3. 사용자가 LIVE 입력
+4. POST /bot/start { live_confirm: true }
+5. command_id 표시
 ```
 
 Bot 상태가 이미 RUNNING이면 START 버튼 비활성화.

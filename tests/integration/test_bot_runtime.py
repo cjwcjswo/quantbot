@@ -122,6 +122,58 @@ async def test_scanner_refresh_populates_runtime_watchlist(redis):
     await rt.shutdown()
 
 
+async def test_scanner_refresh_prefilters_before_kline_atr(redis):
+    gw = FakeGateway()
+    symbols = [f"SYM{i}USDT" for i in range(10)]
+    gw.set_instruments([symbol_meta(symbol=s, launch_time_ms=0) for s in symbols])
+    for i, symbol in enumerate(symbols):
+        gw.set_ticker(
+            ticker(
+                symbol=symbol,
+                bid="100",
+                ask="100.01",
+                turnover_24h=str(100_000_000 - i),
+            )
+        )
+        gw.set_kline(
+            symbol,
+            "15",
+            series_from_closes(["100"] * 80, symbol=symbol, interval="15"),
+        )
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    rt.config.scanner.max_candidates = 2
+    await rt.startup()
+    await rt._collector.refresh_tickers()
+
+    await rt._refresh_watchlist_if_due(force=True)
+
+    assert len(gw.kline_calls) == 6
+    assert [symbol for symbol, _, _ in gw.kline_calls] == symbols[:6]
+    await rt.shutdown()
+
+
+async def test_scanner_atr_cache_prunes_stale_and_ineligible_symbols(redis):
+    rt = _runtime(redis, mode=BotMode.PAPER)
+    rt.config.scanner.atr_cache_ttl_sec = 10
+    rt._scanner_atr_percent = {
+        "FRESHUSDT": Decimal("1.0"),
+        "STALEUSDT": Decimal("1.0"),
+        "OUTSIDEUSDT": Decimal("1.0"),
+    }
+    rt._scanner_atr_updated_ms = {
+        "FRESHUSDT": 20_000,
+        "STALEUSDT": 1_000,
+        "OUTSIDEUSDT": 20_000,
+    }
+
+    fresh = rt._fresh_scanner_atr(
+        [ticker(symbol="FRESHUSDT"), ticker(symbol="STALEUSDT")], 20_000
+    )
+
+    assert fresh == {"FRESHUSDT": Decimal("1.0")}
+    assert set(rt._scanner_atr_percent) == {"FRESHUSDT"}
+
+
 async def test_trading_cycle_publishes_watchlist(redis):
     import json
 
@@ -144,6 +196,27 @@ async def test_trading_cycle_publishes_watchlist(redis):
     btc = next(e for e in entries if e["symbol"] == "BTCUSDT")
     assert btc["direction"] in ("NONE", "LONG", "SHORT")
     assert "readiness" in btc
+    assert gw.orderbook_calls == []
+    await rt.shutdown()
+
+
+async def test_process_symbol_refreshes_stale_tickers(redis):
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    for tf in ("1", "5", "15"):
+        gw.set_kline("BTCUSDT", tf,
+                     series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+    await rt._collector.refresh_tickers()
+    rt._collector._last_ticker_ms = 0
+
+    await rt._process_symbol("BTCUSDT", Decimal("10000"))
+
+    assert gw.ticker_calls >= 2
     await rt.shutdown()
 
 
@@ -280,15 +353,14 @@ async def test_reload_config_rebuilds_runtime_modules_without_resetting_paper_wa
     await rt.shutdown()
 
 
-async def test_reload_config_applies_bot_mode_env_override(redis, tmp_path, monkeypatch):
+async def test_reload_config_uses_yaml_mode(redis, tmp_path):
     initial = tmp_path / "initial.yaml"
     updated = tmp_path / "updated.yaml"
     initial.write_text('bot:\n  mode: "PAPER"\n', encoding="utf-8")
-    updated.write_text('bot:\n  mode: "PAPER"\n', encoding="utf-8")
+    updated.write_text('bot:\n  mode: "LIVE"\n', encoding="utf-8")
     rt = _runtime_with_config(redis, initial)
     await rt.startup()
     rt.secrets.quantbot_config = str(updated)
-    monkeypatch.setenv("BOT_MODE", "LIVE")
 
     await rt.handle_command(Command(type=CommandType.RELOAD_CONFIG))
 

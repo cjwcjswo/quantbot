@@ -39,6 +39,19 @@ async def test_aggressive_limit_full_fill(config):
     assert gw.placed_orders[0].order_type == OrderType.AGGRESSIVE_LIMIT
 
 
+async def test_aggressive_limit_records_actual_entry_mode(config):
+    config.orders.scout_order_type = "AGGRESSIVE_LIMIT"
+    gw = FakeGateway()
+    recorded = []
+    om = OrderManager(gw, config, order_sink=recorded.append)
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT, best_bid=_BID, best_ask=_ASK,
+    )
+    assert out.status == "FILLED"
+    assert recorded[0].entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+
+
 async def test_aggressive_partial_above_keep(config):
     om, gw = _om(config, fill_ratio="0.8")
     out = await om.place_entry(

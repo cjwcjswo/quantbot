@@ -552,6 +552,12 @@ entry:
     min_score: 8
     position_fraction: 0.30
     stop_atr: 0.7
+    min_volume_ratio: 1.15
+    max_distance_to_box_atr: 0.35
+    long_rsi_min: 48
+    long_rsi_max: 62
+    short_rsi_min: 38
+    short_rsi_max: 52
 
   breakout_confirm:
     position_fraction: 0.30
@@ -796,47 +802,51 @@ close_position_in_range = (close - low) / candle_range
 아래 조건을 모두 만족해야 한다.
 
 ```text
-close > box_high + 0.05 ATR
-volume_ratio >= 1.5
-volume_ratio < 4.0
-body_ratio >= 0.45
-upper_wick_ratio <= 0.35
-close_position_in_range >= 0.75
+close > box_high + entry.breakout_confirm.close_beyond_boundary_atr ATR
+volume_ratio >= volume.min_breakout_volume_ratio
+volume_ratio < volume.max_exhaustion_volume_ratio
+body_ratio >= candle_quality.min_body_ratio_for_breakout
+upper_wick_ratio <= candle_quality.max_opposite_wick_ratio_for_breakout
+close_position_in_range >= candle_quality.long_min_close_position_in_range
 Anti-Chase Long 통과
 ```
+
+현재 기본값은 각각 `0.05`, `1.5`, `4.0`, `0.45`, `0.35`, `0.75`다.
 
 ## 10.3 Healthy Short Breakout
 
 아래 조건을 모두 만족해야 한다.
 
 ```text
-close < box_low - 0.05 ATR
-volume_ratio >= 1.5
-volume_ratio < 4.0
-body_ratio >= 0.45
-lower_wick_ratio <= 0.35
-close_position_in_range <= 0.25
+close < box_low - entry.breakout_confirm.close_beyond_boundary_atr ATR
+volume_ratio >= volume.min_breakout_volume_ratio
+volume_ratio < volume.max_exhaustion_volume_ratio
+body_ratio >= candle_quality.min_body_ratio_for_breakout
+lower_wick_ratio <= candle_quality.max_opposite_wick_ratio_for_breakout
+close_position_in_range <= candle_quality.short_max_close_position_in_range
 Anti-Chase Short 통과
 ```
+
+현재 기본값은 각각 `0.05`, `1.5`, `4.0`, `0.45`, `0.35`, `0.25`다.
 
 ## 10.4 Exhaustion Breakout
 
 롱 Exhaustion:
 
 ```text
-volume_ratio >= 4.0
-or upper_wick_ratio >= 0.35
-or close_position_in_range < 0.75
-or 최근 3개 1m 캔들 누적 상승폭 >= 1.5 ATR
+volume_ratio >= volume.max_exhaustion_volume_ratio
+or upper_wick_ratio >= candle_quality.max_opposite_wick_ratio_for_breakout
+or close_position_in_range < candle_quality.long_min_close_position_in_range
+or 최근 3개 1m 캔들 누적 상승폭 >= entry.anti_chase.max_recent_3_candle_move_atr ATR
 ```
 
 숏 Exhaustion:
 
 ```text
-volume_ratio >= 4.0
-or lower_wick_ratio >= 0.35
-or close_position_in_range > 0.25
-or 최근 3개 1m 캔들 누적 하락폭 >= 1.5 ATR
+volume_ratio >= volume.max_exhaustion_volume_ratio
+or lower_wick_ratio >= candle_quality.max_opposite_wick_ratio_for_breakout
+or close_position_in_range > candle_quality.short_max_close_position_in_range
+or 최근 3개 1m 캔들 누적 하락폭 >= entry.anti_chase.max_recent_3_candle_move_atr ATR
 ```
 
 Exhaustion Breakout 처리:
@@ -864,25 +874,33 @@ position_fraction:
 
 ```text
 Trend Long 후보
-1m 박스 상단까지 거리 <= 0.35 ATR
+1m 박스 상단까지 거리 <= entry.pre_breakout.max_distance_to_box_atr ATR
 1m 저점 2회 이상 상승
-1m RSI14 >= 48 and RSI14 <= 62
+1m RSI14 >= entry.pre_breakout.long_rsi_min
+1m RSI14 <= entry.pre_breakout.long_rsi_max
 최근 20개 평균 True Range < 최근 100개 평균 True Range
-volume_ratio >= 1.15 and volume_ratio < 4.0
+volume_ratio >= entry.pre_breakout.min_volume_ratio
+volume_ratio < volume.max_exhaustion_volume_ratio
 Anti-Chase Long 통과
 ```
+
+현재 기본값은 거리 `0.35 ATR`, RSI `48..62`, 거래량 비율 `1.15..4.0`이다.
 
 숏 Scout 조건:
 
 ```text
 Trend Short 후보
-1m 박스 하단까지 거리 <= 0.35 ATR
+1m 박스 하단까지 거리 <= entry.pre_breakout.max_distance_to_box_atr ATR
 1m 고점 2회 이상 하락
-1m RSI14 >= 38 and RSI14 <= 52
+1m RSI14 >= entry.pre_breakout.short_rsi_min
+1m RSI14 <= entry.pre_breakout.short_rsi_max
 최근 20개 평균 True Range < 최근 100개 평균 True Range
-volume_ratio >= 1.15 and volume_ratio < 4.0
+volume_ratio >= entry.pre_breakout.min_volume_ratio
+volume_ratio < volume.max_exhaustion_volume_ratio
 Anti-Chase Short 통과
 ```
+
+현재 기본값은 거리 `0.35 ATR`, RSI `38..52`, 거래량 비율 `1.15..4.0`이다.
 
 ## 11.2 Breakout Confirm
 
@@ -1025,21 +1043,26 @@ minNotional 미만이면 주문 금지
 ## 13.2 Stop Distance Guard
 
 ```text
-stop_distance_atr < 0.5 → 진입 금지
-stop_distance_atr > 1.5 → 진입 금지
+stop_distance_atr < risk.min_stop_distance_atr → 진입 금지
+stop_distance_atr > risk.max_stop_distance_atr → 진입 금지
 ```
+
+현재 기본값은 `0.5 ATR` 이상, `1.5 ATR` 이하다.
 
 ## 13.3 레버리지 정책
 
 ```text
-Scout max leverage = 3x
-Breakout max leverage = 5x
-Retest max leverage = 6x
-고품질 누적 포지션 max leverage = 8x
-ATR% > 3.5이면 max leverage = 3x
-연속 손실 2회 이상이면 max leverage = 3x
-일일 손실 -3% 도달 시 max leverage = 2x or 신규 진입 중지
+Scout max leverage = risk.scout_max_leverage
+Breakout max leverage = risk.breakout_max_leverage
+Retest max leverage = risk.retest_max_leverage
+고품질 누적 포지션 max leverage = risk.high_quality_max_leverage
+ATR% > risk.high_atr_derisk_threshold_percent이면 max leverage = risk.high_atr_max_leverage
+연속 손실 risk.consecutive_loss_derisk_count회 이상이면 max leverage = risk.consecutive_loss_max_leverage
+일일 손실 risk.daily_loss_derisk_percent 도달 시 max leverage = risk.daily_loss_max_leverage or 신규 진입 중지
 ```
+
+현재 기본값은 Scout `3x`, Breakout `5x`, Retest `6x`, 고품질 `8x`,
+고 ATR 기준 `3.5% → 3x`, 연속 손실 `2회 → 3x`, 일일 손실 `3% → 2x`다.
 
 ## 13.4 Liquidation Guard
 

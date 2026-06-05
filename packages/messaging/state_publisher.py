@@ -34,7 +34,7 @@ def _position_json(p: Position, mode: BotMode | None = None) -> dict:
         "manual_added_qty": str(p.manual_added_qty),
         "leverage": str(p.leverage),
         "mark_price": None,
-        "strategy_id": p.strategy_reason or None,
+        "strategy_id": p.strategy_id or None,
         "protection_status": _protection_status(p),
         "stop_loss": str(p.stop_loss_price) if p.stop_loss_price is not None else None,
         "take_profit": str(p.take_profit_price) if p.take_profit_price is not None else None,

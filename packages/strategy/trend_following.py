@@ -1,9 +1,8 @@
 """Trend Following Strategy (impl doc §8).
 
 Emits a LONG or SHORT candidate when the 15m trend and 5m alignment conditions
-all hold. RSI bounds (50/68 long, 32/50 short) and the ATR% band are fixed by the
-doc; gap/slope/distance thresholds come from ``trend_quality`` and the setup
-volume floor from ``volume``.
+all hold. RSI bounds, ATR% band, trend thresholds and scoring knobs come from
+YAML config so live tuning has one source of truth.
 """
 
 from __future__ import annotations
@@ -15,10 +14,6 @@ from packages.core.enums import SignalDirection
 from packages.core.models import IndicatorSnapshot, Signal
 from packages.strategy.base import Strategy, StrategyContext
 
-# Fixed RSI bands from impl doc §8.
-_LONG_RSI_MIN, _LONG_RSI_MAX = Decimal("50"), Decimal("68")
-_SHORT_RSI_MIN, _SHORT_RSI_MAX = Decimal("32"), Decimal("50")
-
 
 class TrendFollowingStrategy(Strategy):
     name = "trend_following"
@@ -29,9 +24,17 @@ class TrendFollowingStrategy(Strategy):
         self.min_gap = Decimal(str(tq.min_ema_gap_percent_15m))
         self.min_slope = Decimal(str(tq.min_ema20_slope_atr_15m))
         self.min_close_dist = Decimal(str(tq.min_close_distance_from_ema20_atr_15m))
+        self.long_rsi_min = Decimal(str(tq.long_rsi_min_5m))
+        self.long_rsi_max = Decimal(str(tq.long_rsi_max_5m))
+        self.short_rsi_min = Decimal(str(tq.short_rsi_min_5m))
+        self.short_rsi_max = Decimal(str(tq.short_rsi_max_5m))
         self.min_setup_vol = Decimal(str(config.volume.min_setup_volume_ratio))
         self.atr_min = Decimal(str(config.scanner.min_atr_percent))
         self.atr_max = Decimal(str(config.scanner.max_atr_percent))
+        self.score_gap_high = Decimal(str(tq.score_gap_high_percent_15m))
+        self.score_slope_high = Decimal(str(tq.score_slope_high_atr_15m))
+        self.score_volume_high = Decimal(str(tq.score_volume_high_ratio_5m))
+        self.score_low_atr = Decimal(str(tq.score_low_atr_percent_5m))
 
     def required_timeframes(self) -> list[str]:
         return ["5", "15"]
@@ -64,7 +67,7 @@ class TrendFollowingStrategy(Strategy):
             return False
         if s5.close <= s5.ema20:
             return False
-        if s5.rsi14 is None or not (_LONG_RSI_MIN <= s5.rsi14 <= _LONG_RSI_MAX):
+        if s5.rsi14 is None or not (self.long_rsi_min <= s5.rsi14 <= self.long_rsi_max):
             return False
         if s5.volume_ratio is None or s5.volume_ratio < self.min_setup_vol:
             return False
@@ -82,7 +85,7 @@ class TrendFollowingStrategy(Strategy):
             return False
         if s5.close >= s5.ema20:
             return False
-        if s5.rsi14 is None or not (_SHORT_RSI_MIN <= s5.rsi14 <= _SHORT_RSI_MAX):
+        if s5.rsi14 is None or not (self.short_rsi_min <= s5.rsi14 <= self.short_rsi_max):
             return False
         if s5.volume_ratio is None or s5.volume_ratio < self.min_setup_vol:
             return False
@@ -117,11 +120,11 @@ class TrendFollowingStrategy(Strategy):
     ) -> Decimal:
         """Coarse 0..10 confidence for logging / downstream prioritisation."""
         score = Decimal(0)
-        score += Decimal(3) if gap >= Decimal("0.30") else Decimal(2)
+        score += Decimal(3) if gap >= self.score_gap_high else Decimal(2)
         slope_mag = abs(s15.ema20_slope_atr) if s15.ema20_slope_atr is not None else Decimal(0)
-        score += Decimal(3) if slope_mag >= Decimal("0.10") else Decimal(2)
+        score += Decimal(3) if slope_mag >= self.score_slope_high else Decimal(2)
         if s5.volume_ratio is not None:
-            score += Decimal(2) if s5.volume_ratio >= Decimal("1.2") else Decimal(1)
-        if s5.atr_percent is not None and s5.atr_percent <= Decimal("3.0"):
+            score += Decimal(2) if s5.volume_ratio >= self.score_volume_high else Decimal(1)
+        if s5.atr_percent is not None and s5.atr_percent <= self.score_low_atr:
             score += Decimal(2)
         return min(score, Decimal(10))

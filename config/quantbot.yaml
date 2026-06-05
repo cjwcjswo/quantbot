@@ -31,6 +31,12 @@ universe:
 scanner:
   refresh_interval_sec: 180
   max_candidates: 40
+  atr_prefilter_multiple: 3
+  atr_refresh_budget: 30
+  atr_cache_ttl_sec: 900
+  kline_1m_refresh_sec: 25
+  kline_5m_refresh_sec: 120
+  kline_15m_refresh_sec: 300
   min_atr_percent: 0.15
   max_atr_percent: 7.0
   max_spread_percent: 0.10
@@ -38,9 +44,17 @@ scanner:
   min_orderbook_depth_usdt_0_3_percent: 300000
 
 trend_quality:
+  long_rsi_min_5m: 50
+  long_rsi_max_5m: 68
+  short_rsi_min_5m: 32
+  short_rsi_max_5m: 50
   min_ema_gap_percent_15m: 0.08
   min_ema20_slope_atr_15m: 0.02
   min_close_distance_from_ema20_atr_15m: 0.03
+  score_gap_high_percent_15m: 0.30
+  score_slope_high_atr_15m: 0.10
+  score_volume_high_ratio_5m: 1.2
+  score_low_atr_percent_5m: 3.0
 
 volume:
   min_setup_volume_ratio: 0.4
@@ -64,6 +78,22 @@ entry:
     min_score: 6
     position_fraction: 0.30
     stop_atr: 0.7
+    min_volume_ratio: 1.15
+    max_distance_to_box_atr: 0.35
+    long_rsi_min: 48
+    long_rsi_max: 62
+    short_rsi_min: 38
+    short_rsi_max: 52
+    score_gap_high_percent_15m: 0.30
+    score_slope_high_atr_15m: 0.10
+    score_long_rsi_center_min: 50
+    score_long_rsi_center_max: 60
+    score_short_rsi_center_min: 40
+    score_short_rsi_center_max: 50
+    score_near_box_atr: 0.20
+    score_mid_box_atr: 0.35
+    score_compression_ratio: 0.8
+    score_high_volume_ratio: 2.0
 
   breakout_confirm:
     position_fraction: 0.30
@@ -96,6 +126,8 @@ orders:
   limit_reorder_attempts: 1
   aggressive_limit_time_in_force: "IOC"
   use_reduce_only_for_exits: true
+  pre_order_depth_multiple: 3.0
+  pre_order_depth_band_percent: 0.1
   partial_fill_min_ratio_to_keep: 0.70
   partial_fill_below_min_action: "CLOSE_FILLED_QTY"
 
@@ -112,6 +144,13 @@ risk:
   retest_max_leverage: 6
   high_quality_max_leverage: 8
   high_atr_max_leverage: 3
+  high_atr_derisk_threshold_percent: 3.5
+  consecutive_loss_derisk_count: 2
+  consecutive_loss_max_leverage: 3
+  daily_loss_derisk_percent: 3.0
+  daily_loss_max_leverage: 2
+  min_stop_distance_atr: 0.5
+  max_stop_distance_atr: 1.5
   isolated_margin: true
 
 liquidation_guard:
@@ -134,6 +173,7 @@ position_protection:
   verify_tpsl_after_entry: true
   verify_tpsl_retry_count: 3
   verify_tpsl_retry_interval_sec: 1
+  tpsl_verify_tolerance_percent: 0.02
 
 position:
   partial_take_profit_r: 2.0
@@ -190,8 +230,8 @@ manual_intervention:
   cancel_external_open_orders: false
 
 data_quality:
-  max_kline_delay_sec: 5
-  max_ticker_delay_sec: 3
+  max_kline_delay_sec: 30
+  max_ticker_delay_sec: 30
   max_orderbook_delay_sec: 3
   max_missing_candles: 1
   block_if_candle_gap_detected: true
@@ -203,10 +243,20 @@ clock_sync:
   block_trading_if_drift_ms_above: 1000
 
 api_rate_limit:
-  max_rest_requests_per_second: 5
+  max_rest_requests_per_second: 2
   max_order_requests_per_second: 2
   backoff_base_sec: 1
   backoff_max_sec: 30
+
+api:
+  app_env: "production"
+  api_host: "0.0.0.0"
+  api_port: 8000
+  cors_origins:
+    - "http://localhost:8090"
+  api_auth_enabled: false
+  heartbeat_alive_sec: 15
+  api_run_maintenance: true
 
 funding_guard:
   enabled: true

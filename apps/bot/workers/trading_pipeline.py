@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Protocol
+from typing import Awaitable, Callable, Protocol
 
 from apps.bot.runtime.runtime_state import RuntimeState
 from packages.config.settings import AppConfig
@@ -262,6 +262,7 @@ class TradingService:
                     missing_candles=market.missing_candles,
                     ticker_price=market.ticker_price, kline_close=market.kline_close,
                     indicators=snapshot_1m,
+                    require_orderbook=market.last_orderbook_ms is not None,
                 )
                 if reason:
                     return f"DATA_QUALITY:{reason}"
@@ -313,6 +314,9 @@ class TradingService:
         best_bid: Decimal,
         best_ask: Decimal,
         market: MarketContext | None = None,
+        orderbook_provider: Callable[
+            [], Awaitable[tuple[OrderBook, int | None]]
+        ] | None = None,
         daily_loss_percent: Decimal = Decimal(0),
         consecutive_losses: int = 0,
     ) -> Position | None:
@@ -350,6 +354,14 @@ class TradingService:
                                       message=f"rejected: {rd.reason}"))
             return None
 
+        if (
+            market is not None
+            and market.orderbook is None
+            and orderbook_provider is not None
+            and self._guards.pre_order_check is not None
+        ):
+            market.orderbook, market.last_orderbook_ms = await orderbook_provider()
+
         post_blocked = self._post_gate(decision.entry_mode, rd.notional, market)
         if post_blocked is not None:
             await self._emit(BotEvent(type=BotEventType.DATA_QUALITY_BLOCK,
@@ -375,7 +387,7 @@ class TradingService:
             stop_loss_price=rd.stop_loss_price, take_profit_price=rd.take_profit_price,
             initial_risk_per_unit=abs(opened.fill_price - rd.stop_loss_price),
             entry_mode=decision.entry_mode, signal_score=sig.score,
-            strategy_reason=sig.reason, fees_paid=opened.fee,
+            strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
             breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
         )
 
@@ -545,6 +557,7 @@ class TradingService:
                     entry_price=str(pos.avg_entry_price), exit_price=str(result.fill_price),
                     realized_pnl=str(pos.realized_pnl),
                     exit_reason=reason.value if reason else None,
+                    strategy_id=pos.strategy_id or None,
                     entry_mode=pos.entry_mode.value if pos.entry_mode else None,
                     mode=self.mode.value, leverage=str(pos.leverage),
                     fees=str(pos.fees_paid),

@@ -1,13 +1,8 @@
 """Leverage policy (impl doc §13.3).
 
 ```
-Scout    max 3x
-Breakout max 5x
-Retest   max 6x
-high-quality cumulative max 8x
-ATR% > 3.5            => max 3x
-consecutive losses>=2 => max 3x
-daily loss <= -3%     => max 2x (or stop new entries)
+Scout / Breakout / Retest caps come from risk.*_max_leverage.
+High ATR, consecutive losses and daily loss derisk thresholds are YAML-tuned.
 ```
 The effective cap is the minimum of every applicable rule, floored at min_leverage.
 """
@@ -19,10 +14,6 @@ from decimal import Decimal
 
 from packages.config.settings import RiskSection
 from packages.core.enums import EntryMode
-
-_HIGH_ATR_THRESHOLD = Decimal("3.5")
-_DAILY_LOSS_DERISK_PERCENT = Decimal("3.0")
-_CONSECUTIVE_LOSS_DERISK = 2
 
 
 def max_leverage(
@@ -44,12 +35,14 @@ def max_leverage(
         base = config.high_quality_max_leverage
     caps = [Decimal(base)]
 
-    if atr_percent is not None and atr_percent > _HIGH_ATR_THRESHOLD:
+    if atr_percent is not None and atr_percent > Decimal(
+        str(config.high_atr_derisk_threshold_percent)
+    ):
         caps.append(Decimal(config.high_atr_max_leverage))
-    if consecutive_losses >= _CONSECUTIVE_LOSS_DERISK:
-        caps.append(Decimal(3))
-    if daily_loss_percent >= _DAILY_LOSS_DERISK_PERCENT:
-        caps.append(Decimal(2))
+    if consecutive_losses >= config.consecutive_loss_derisk_count:
+        caps.append(Decimal(config.consecutive_loss_max_leverage))
+    if daily_loss_percent >= Decimal(str(config.daily_loss_derisk_percent)):
+        caps.append(Decimal(config.daily_loss_max_leverage))
 
     return max(Decimal(config.min_leverage), min(caps))
 

@@ -38,6 +38,15 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _max_text(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    if len(value) <= limit:
+        return value
+    logger.warning("truncating persisted text field to %s chars", limit)
+    return value[:limit]
+
+
 class TradeLogger:
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._sf = session_factory
@@ -156,7 +165,7 @@ class TradeLogger:
                 leverage=str(position.leverage),
                 mark_price=mark_price,
                 unrealized_pnl=str(position.unrealized_pnl),
-                strategy_id=strategy_id or (position.strategy_reason or None),
+                strategy_id=_max_text(strategy_id or (position.strategy_id or None), 64),
                 protection_status=protection_status,
                 opened_at=position.opened_at,
             )
@@ -190,7 +199,7 @@ class TradeLogger:
                 trade_id=trade_id or uuid.uuid4().hex,
                 symbol=symbol, side=side, qty=qty, entry_price=entry_price,
                 exit_price=exit_price, realized_pnl=realized_pnl, exit_reason=exit_reason,
-                strategy_id=strategy_id, entry_mode=entry_mode, mode=mode,
+                strategy_id=_max_text(strategy_id, 64), entry_mode=entry_mode, mode=mode,
                 leverage=leverage, fees=fees, funding_fees=funding_fees,
                 gross_pnl=gross_pnl, net_pnl=net_pnl, r_multiple=r_multiple,
                 opened_at=opened_at, closed_at=closed_at,

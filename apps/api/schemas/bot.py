@@ -4,11 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from packages.core.enums import BotMode
-
 
 class StartReq(BaseModel):
-    mode: BotMode
     live_confirm: bool = False
 
 

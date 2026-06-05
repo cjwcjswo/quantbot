@@ -78,6 +78,14 @@ def _entry_kwargs(market=None):
     )
 
 
+def _deep_book():
+    return OrderBook(
+        symbol="BTCUSDT",
+        bids=(OrderBookLevel(price=Decimal("100.98"), size=Decimal("1000")),),
+        asks=(OrderBookLevel(price=Decimal("101.0"), size=Decimal("1000")),),
+    )
+
+
 async def _paper_service(config, guards=None, events=None):
     return _make_service(
         config, mode=BotMode.PAPER,
@@ -97,7 +105,8 @@ async def test_blocked_by_data_quality(config):
     guards = GuardSet(data_quality=DataQualityGuard(config.data_quality))
     service = await _paper_service(config, guards=guards)
     market = MarketContext(
-        now_ms=100_000, last_kline_ms=100_000 - 6000,  # stale > 5s
+        now_ms=100_000,
+        last_kline_ms=100_000 - (config.data_quality.max_kline_delay_sec + 1) * 1000,
         last_ticker_ms=100_000, last_orderbook_ms=100_000,
         ticker_price=Decimal("101"), kline_close=Decimal("101"),
     )
@@ -131,6 +140,57 @@ async def test_blocked_by_pre_order_depth(config):
     )
     market = MarketContext(orderbook=thin, symbol_status="Trading")
     assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+
+async def test_orderbook_loaded_only_after_entry_candidate(config):
+    clock = ClockSyncGuard(block_trading_if_drift_ms_above=1000)
+    clock.update(server_time_ms=0, local_time_ms=0)
+    guards = GuardSet(pre_order_check=PreOrderCheck(config), clock_guard=clock)
+    service = await _paper_service(config, guards=guards)
+    calls = {"n": 0}
+
+    async def load_orderbook():
+        calls["n"] += 1
+        return _deep_book(), 100_000
+
+    pos = await service.evaluate_entry(
+        **_entry_kwargs(MarketContext(symbol_status="Trading")),
+        orderbook_provider=load_orderbook,
+    )
+
+    assert pos is not None
+    assert calls["n"] == 1
+
+
+async def test_orderbook_not_loaded_without_signal(config):
+    clock = ClockSyncGuard(block_trading_if_drift_ms_above=1000)
+    clock.update(server_time_ms=0, local_time_ms=0)
+    guards = GuardSet(pre_order_check=PreOrderCheck(config), clock_guard=clock)
+    service = await _paper_service(config, guards=guards)
+    calls = {"n": 0}
+    snapshots = _snapshots()
+    snapshots["5"] = snap(
+        timeframe="5",
+        close="100",
+        ema20="100",
+        ema50="100",
+        rsi="60",
+        atr="1",
+        atr_percent="1.5",
+        volume_ratio="1.0",
+    )
+
+    async def load_orderbook():
+        calls["n"] += 1
+        return _deep_book(), 100_000
+
+    kwargs = _entry_kwargs(MarketContext(symbol_status="Trading"))
+    kwargs["snapshots"] = snapshots
+    assert await service.evaluate_entry(
+        **kwargs,
+        orderbook_provider=load_orderbook,
+    ) is None
+    assert calls["n"] == 0
 
 
 async def test_paper_entry_passes_with_no_guards(config):

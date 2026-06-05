@@ -21,9 +21,6 @@ from packages.risk.levels import estimate_liq_price, stop_loss_price, take_profi
 from packages.risk.position_sizing import compute_size
 from packages.universe import meets_min_notional, meets_min_qty
 
-_STOP_DISTANCE_ATR_MIN = Decimal("0.5")  # impl doc §13.2
-_STOP_DISTANCE_ATR_MAX = Decimal("1.5")
-
 
 @dataclass
 class RiskContext:
@@ -85,9 +82,9 @@ class RiskManager:
 
         # Stop Distance Guard (§13.2)
         stop_distance_atr = abs(entry_price - stop) / atr
-        if stop_distance_atr < _STOP_DISTANCE_ATR_MIN:
+        if stop_distance_atr < Decimal(str(risk.min_stop_distance_atr)):
             return _reject("STOP_TOO_TIGHT")
-        if stop_distance_atr > _STOP_DISTANCE_ATR_MAX:
+        if stop_distance_atr > Decimal(str(risk.max_stop_distance_atr)):
             return _reject("STOP_TOO_WIDE")
 
         # Account-level blocks

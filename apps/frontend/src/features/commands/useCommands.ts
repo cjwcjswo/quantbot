@@ -2,10 +2,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/shared/api/endpoints";
 import { ApiClientError } from "@/shared/api/client";
 import { useUiStore } from "@/shared/store/uiStore";
-import type { BotMode } from "@/shared/api/types";
 
 type Command =
-  | { kind: "start"; mode: BotMode; liveConfirm: boolean }
+  | { kind: "start"; liveConfirm: boolean }
   | { kind: "stop"; closePositions: boolean; cancelOpenOrders: boolean }
   | { kind: "pause" }
   | { kind: "resume" }
@@ -18,7 +17,7 @@ export function useCommand() {
     mutationFn: (cmd: Command) => {
       switch (cmd.kind) {
         case "start":
-          return api.start(cmd.mode, cmd.liveConfirm);
+          return api.start(cmd.liveConfirm);
         case "stop":
           return api.stop(cmd.closePositions, cmd.cancelOpenOrders);
         case "pause":

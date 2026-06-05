@@ -24,8 +24,8 @@ export const api = {
   health: () => apiGet<Record<string, string>>("/health"),
 
   botStatus: () => apiGet<BotStatus>("/bot/status"),
-  start: (mode: BotMode, liveConfirm = false) =>
-    apiSend<CommandAccepted>("POST", "/bot/start", { mode, live_confirm: liveConfirm }),
+  start: (liveConfirm = false) =>
+    apiSend<CommandAccepted>("POST", "/bot/start", { live_confirm: liveConfirm }),
   stop: (closePositions: boolean, cancelOpenOrders: boolean) =>
     apiSend<CommandAccepted>("POST", "/bot/stop", {
       close_positions: closePositions,

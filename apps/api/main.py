@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from apps.api.config import ApiSettings
+from apps.api.config import ApiSettings, api_settings_from_config
 from apps.api.errors import register_exception_handlers
 from apps.api.lifespan import attach_runtime, lifespan
 from apps.api.routers import (
@@ -36,7 +36,11 @@ def create_app(
 ) -> FastAPI:
     """Build the app. Tests inject session_factory/redis/config and usually
     pass start_stream=False so the DashboardStream background tasks stay off."""
-    settings = api_settings or ApiSettings()
+    if config is None:
+        from packages.config import load_app_config
+
+        config = load_app_config()
+    settings = api_settings or api_settings_from_config(config)
     app = FastAPI(title="QuantBot API", version="1.1.0", lifespan=lifespan)
 
     # values consumed by lifespan
@@ -59,11 +63,9 @@ def create_app(
     # When tests inject session_factory + redis, wire runtime state eagerly so the
     # app works under httpx ASGITransport (which does not run the lifespan).
     if session_factory is not None and redis is not None:
-        from packages.config import load_app_config
-
         attach_runtime(
             app,
-            config=config or load_app_config("config/quantbot.yaml"),
+            config=config,
             api_settings=settings,
             session_factory=session_factory,
             redis=redis,

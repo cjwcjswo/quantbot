@@ -1,7 +1,8 @@
 # Production stack for the QuantBot system (Ubuntu / EC2).
 #
 #   cd /home/ubuntu/dev/quantbot
-#   cp deploy/.env.example .env   # fill in BYBIT keys; set BOT_MODE
+#   cp deploy/.env.example .env   # fill in BYBIT keys
+#   $EDITOR config/quantbot.yaml   # set bot.mode/API options/strategy tuning
 #   bash deploy/deploy.sh
 #
 # Ports bind to 127.0.0.1 only; the host nginx (deploy/nginx/quantbot.conf, :8090)
@@ -60,7 +61,7 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: quantbot-app
-    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    command: python -m apps.api.run
     env_file: ../.env
     environment:
       QUANTBOT_CONFIG: config/quantbot.yaml
@@ -68,7 +69,7 @@ services:
     volumes:
       - ../logs:/app/logs
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${QUANTBOT_API_PORT:-8000}:${QUANTBOT_API_PORT:-8000}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +82,8 @@ services:
       context: ../apps/frontend
       dockerfile: Dockerfile
     image: quantbot-web
+    environment:
+      QUANTBOT_API_PORT: ${QUANTBOT_API_PORT:-8000}
     ports:
       - "127.0.0.1:8080:80"
     depends_on:

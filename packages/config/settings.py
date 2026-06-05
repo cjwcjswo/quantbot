@@ -63,6 +63,12 @@ class UniverseSection(_Section):
 class ScannerSection(_Section):
     refresh_interval_sec: int = 300
     max_candidates: int = 30
+    atr_prefilter_multiple: int = 3
+    atr_refresh_budget: int = 30
+    atr_cache_ttl_sec: int = 900
+    kline_1m_refresh_sec: int = 25
+    kline_5m_refresh_sec: int = 120
+    kline_15m_refresh_sec: int = 300
     min_atr_percent: float = 0.5
     max_atr_percent: float = 5.0
     max_spread_percent: float = 0.08
@@ -71,9 +77,17 @@ class ScannerSection(_Section):
 
 
 class TrendQualitySection(_Section):
+    long_rsi_min_5m: float = 50
+    long_rsi_max_5m: float = 68
+    short_rsi_min_5m: float = 32
+    short_rsi_max_5m: float = 50
     min_ema_gap_percent_15m: float = 0.15
     min_ema20_slope_atr_15m: float = 0.05
     min_close_distance_from_ema20_atr_15m: float = 0.10
+    score_gap_high_percent_15m: float = 0.30
+    score_slope_high_atr_15m: float = 0.10
+    score_volume_high_ratio_5m: float = 1.2
+    score_low_atr_percent_5m: float = 3.0
 
 
 class VolumeSection(_Section):
@@ -100,6 +114,22 @@ class PreBreakoutEntry(_Section):
     min_score: int = 8
     position_fraction: float = 0.30
     stop_atr: float = 0.7
+    min_volume_ratio: float = 1.15
+    max_distance_to_box_atr: float = 0.35
+    long_rsi_min: float = 48
+    long_rsi_max: float = 62
+    short_rsi_min: float = 38
+    short_rsi_max: float = 52
+    score_gap_high_percent_15m: float = 0.30
+    score_slope_high_atr_15m: float = 0.10
+    score_long_rsi_center_min: float = 50
+    score_long_rsi_center_max: float = 60
+    score_short_rsi_center_min: float = 40
+    score_short_rsi_center_max: float = 50
+    score_near_box_atr: float = 0.20
+    score_mid_box_atr: float = 0.35
+    score_compression_ratio: float = 0.8
+    score_high_volume_ratio: float = 2.0
 
 
 class BreakoutConfirmEntry(_Section):
@@ -144,6 +174,8 @@ class OrdersSection(_Section):
     limit_reorder_attempts: int = 1
     aggressive_limit_time_in_force: str = "IOC"
     use_reduce_only_for_exits: bool = True
+    pre_order_depth_multiple: float = 3.0
+    pre_order_depth_band_percent: float = 0.1
     partial_fill_min_ratio_to_keep: float = 0.70
     partial_fill_below_min_action: str = "CLOSE_FILLED_QTY"
 
@@ -161,6 +193,13 @@ class RiskSection(_Section):
     retest_max_leverage: int = 6
     high_quality_max_leverage: int = 8
     high_atr_max_leverage: int = 3
+    high_atr_derisk_threshold_percent: float = 3.5
+    consecutive_loss_derisk_count: int = 2
+    consecutive_loss_max_leverage: int = 3
+    daily_loss_derisk_percent: float = 3.0
+    daily_loss_max_leverage: int = 2
+    min_stop_distance_atr: float = 0.5
+    max_stop_distance_atr: float = 1.5
     isolated_margin: bool = True
 
 
@@ -186,6 +225,7 @@ class PositionProtectionSection(_Section):
     verify_tpsl_after_entry: bool = True
     verify_tpsl_retry_count: int = 3
     verify_tpsl_retry_interval_sec: int = 1
+    tpsl_verify_tolerance_percent: float = 0.02
 
 
 class PositionSection(_Section):
@@ -258,8 +298,8 @@ class ManualInterventionSection(_Section):
 
 
 class DataQualitySection(_Section):
-    max_kline_delay_sec: int = 5
-    max_ticker_delay_sec: int = 3
+    max_kline_delay_sec: int = 30
+    max_ticker_delay_sec: int = 30
     max_orderbook_delay_sec: int = 3
     max_missing_candles: int = 1
     block_if_candle_gap_detected: bool = True
@@ -273,10 +313,23 @@ class ClockSyncSection(_Section):
 
 
 class ApiRateLimitSection(_Section):
-    max_rest_requests_per_second: int = 5
+    max_rest_requests_per_second: int = 2
     max_order_requests_per_second: int = 2
     backoff_base_sec: int = 1
     backoff_max_sec: int = 30
+
+
+class ApiSection(_Section):
+    app_env: str = "local"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    api_auth_enabled: bool = False
+    heartbeat_alive_sec: int = 15
+    api_run_maintenance: bool = True
 
 
 class FundingGuardSection(_Section):
@@ -317,6 +370,7 @@ class AppConfig(_Section):
     data_quality: DataQualitySection = DataQualitySection()
     clock_sync: ClockSyncSection = ClockSyncSection()
     api_rate_limit: ApiRateLimitSection = ApiRateLimitSection()
+    api: ApiSection = ApiSection()
     funding_guard: FundingGuardSection = FundingGuardSection()
     symbol_status: SymbolStatusSection = SymbolStatusSection()
 

@@ -42,10 +42,28 @@ class MarketDataCollector:
         self._last_orderbook_ms: dict[str, int] = {}
 
     # ---- refreshers ---------------------------------------------------- #
-    async def refresh_klines(self, symbol: str, interval: str, limit: int = 200) -> None:
+    async def refresh_klines(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int = 200,
+        *,
+        min_refresh_ms: int = 0,
+    ) -> bool:
+        now = self._clock_ms()
+        key = (symbol, interval)
+        last = self._last_kline_ms.get(key)
+        if (
+            min_refresh_ms > 0
+            and last is not None
+            and now - last < min_refresh_ms
+            and self._store.get(symbol, interval)
+        ):
+            return False
         candles = await self._gw.get_kline(symbol, interval, limit)
         self._store.seed(symbol, interval, candles)
-        self._last_kline_ms[(symbol, interval)] = self._clock_ms()
+        self._last_kline_ms[key] = self._clock_ms()
+        return True
 
     async def refresh_tickers(self) -> list[MarketTicker]:
         tickers = await self._gw.get_tickers()

@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from apps.api.config import ApiSettings
+from apps.api.config import ApiSettings, api_settings_from_config
 from apps.api.maintenance import MaintenanceWorker, load_retention_policy
 from apps.api.websocket import ConnectionManager, DashboardStream
 from packages.config import load_app_config, load_secrets
@@ -53,10 +53,10 @@ async def lifespan(app: FastAPI):
 
     if getattr(st, "session_factory", None) is None:
         # production path: build engine + redis from secrets
-        api_settings = getattr(st, "injected_api_settings", None) or ApiSettings()
         secrets = load_secrets()
         config = getattr(st, "injected_config", None) or load_app_config(
             secrets.quantbot_config)
+        api_settings = getattr(st, "injected_api_settings", None) or api_settings_from_config(config)
         engine = create_engine(secrets.database_url)
         try:
             await init_models(engine)

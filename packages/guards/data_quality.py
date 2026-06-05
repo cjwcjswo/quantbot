@@ -28,6 +28,7 @@ class DataQualityGuard:
         ticker_price: Decimal | None = None,
         kline_close: Decimal | None = None,
         indicators: IndicatorSnapshot | None = None,
+        require_orderbook: bool = True,
     ) -> str | None:
         """Return a block reason, or None if data is good enough to trade."""
         c = self._cfg
@@ -43,9 +44,10 @@ class DataQualityGuard:
         if ticker_delay is None or ticker_delay > c.max_ticker_delay_sec:
             return "TICKER_DELAY"
 
-        ob_delay = delay_sec(last_orderbook_ms)
-        if ob_delay is None or ob_delay > c.max_orderbook_delay_sec:
-            return "ORDERBOOK_DELAY"
+        if require_orderbook:
+            ob_delay = delay_sec(last_orderbook_ms)
+            if ob_delay is None or ob_delay > c.max_orderbook_delay_sec:
+                return "ORDERBOOK_DELAY"
 
         if missing_candles > c.max_missing_candles and c.block_if_candle_gap_detected:
             return "MISSING_CANDLES"

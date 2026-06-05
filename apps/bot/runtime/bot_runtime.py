@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from decimal import Decimal
 from typing import Any
@@ -74,19 +73,6 @@ from packages.universe import UniverseManager
 
 logger = logging.getLogger(__name__)
 
-
-def _apply_mode_env_override(config: AppConfig) -> None:
-    raw = os.environ.get("BOT_MODE")
-    if not raw:
-        return
-    try:
-        config.bot.mode = BotMode(raw.strip().upper())
-    except ValueError:
-        logger.warning("ignoring invalid BOT_MODE=%r (expected PAPER or LIVE)", raw)
-        return
-    logger.info("BOT_MODE override -> %s", config.bot.mode.value)
-
-
 class BotRuntime:
     def __init__(
         self,
@@ -130,6 +116,9 @@ class BotRuntime:
         self._last_equity: Decimal = Decimal(str(config.paper.initial_balance_usdt))
         self._watchlist: list[str] = []
         self._last_scanner_refresh: float = 0.0
+        self._scanner_atr_percent: dict[str, Decimal] = {}
+        self._scanner_atr_updated_ms: dict[str, int] = {}
+        self._scanner_cursor: int = 0
         self._last_reconciliation_status: dict[str, Any] = {}
 
         self._shutdown = asyncio.Event()
@@ -669,20 +658,76 @@ class BotRuntime:
         tickers = self._collector.tickers()
         if not tickers:
             tickers = await self._collector.refresh_tickers()
-        atr_by_symbol: dict[str, Decimal] = {}
-        for ticker in tickers:
-            if not self._universe.is_tradable(ticker.symbol):
-                continue
+        candidates = self._scanner_prefilter_tickers(tickers)
+        refresh_batch = self._scanner_refresh_batch(candidates)
+        for ticker in refresh_batch:
             try:
-                await self._collector.refresh_klines(ticker.symbol, "15", limit=200)
+                await self._collector.refresh_klines(
+                    ticker.symbol,
+                    "15",
+                    limit=200,
+                    min_refresh_ms=self.config.scanner.kline_15m_refresh_sec * 1000,
+                )
                 candles = self._collector.store.get(ticker.symbol, "15")
                 snap = self._indicators.snapshot(ticker.symbol, "15", candles)
                 if snap.atr_percent is not None:
-                    atr_by_symbol[ticker.symbol] = snap.atr_percent
+                    self._scanner_atr_percent[ticker.symbol] = snap.atr_percent
+                    self._scanner_atr_updated_ms[ticker.symbol] = int(time.time() * 1000)
             except Exception:
                 logger.debug("scanner indicator refresh failed for %s", ticker.symbol)
-        self._watchlist = self._scanner.scan(tickers, atr_by_symbol)
+        self._watchlist = self._scanner.scan(
+            tickers, self._fresh_scanner_atr(candidates, int(time.time() * 1000))
+        )
         self._last_scanner_refresh = now
+
+    def _scanner_prefilter_tickers(self, tickers) -> list:
+        assert self._universe is not None
+        cfg = self.config
+        eligible = []
+        for ticker in tickers:
+            if not self._universe.is_tradable(ticker.symbol):
+                continue
+            if ticker.turnover_24h < Decimal(str(cfg.universe.min_24h_turnover_usdt)):
+                continue
+            if ticker.bid_price <= 0 or ticker.ask_price <= 0:
+                continue
+            mid = (ticker.bid_price + ticker.ask_price) / Decimal(2)
+            if mid <= 0:
+                continue
+            spread = (ticker.ask_price - ticker.bid_price) / mid * Decimal(100)
+            if spread > Decimal(str(cfg.scanner.max_spread_percent)):
+                continue
+            eligible.append(ticker)
+        eligible.sort(key=lambda t: t.turnover_24h, reverse=True)
+        limit = max(
+            cfg.scanner.max_candidates,
+            cfg.scanner.max_candidates * cfg.scanner.atr_prefilter_multiple,
+        )
+        return eligible[:limit]
+
+    def _scanner_refresh_batch(self, candidates) -> list:
+        if not candidates:
+            return []
+        budget = max(1, self.config.scanner.atr_refresh_budget)
+        size = min(budget, len(candidates))
+        start = self._scanner_cursor % len(candidates)
+        batch = [candidates[(start + i) % len(candidates)] for i in range(size)]
+        self._scanner_cursor = (start + size) % len(candidates)
+        return batch
+
+    def _fresh_scanner_atr(self, candidates, now_ms: int) -> dict[str, Decimal]:
+        candidate_symbols = {t.symbol for t in candidates}
+        ttl_ms = max(1, self.config.scanner.atr_cache_ttl_sec) * 1000
+        for symbol in list(self._scanner_atr_percent):
+            updated_ms = self._scanner_atr_updated_ms.get(symbol)
+            if (
+                symbol not in candidate_symbols
+                or updated_ms is None
+                or now_ms - updated_ms > ttl_ms
+            ):
+                self._scanner_atr_percent.pop(symbol, None)
+                self._scanner_atr_updated_ms.pop(symbol, None)
+        return dict(self._scanner_atr_percent)
 
     async def _process_symbol(self, symbol: str, equity: Decimal) -> dict | None:
         """Manage an open position or consider a new entry.
@@ -695,7 +740,12 @@ class BotRuntime:
         if ticker is None:
             return None
         for tf in ("1", "5", "15"):
-            await self._collector.refresh_klines(symbol, tf, limit=200)
+            await self._collector.refresh_klines(
+                symbol,
+                tf,
+                limit=200,
+                min_refresh_ms=self._kline_min_refresh_ms(tf),
+            )
         snapshots = {
             tf: self._indicators.snapshot(
                 symbol, tf, self._collector.store.get(symbol, tf)
@@ -703,6 +753,19 @@ class BotRuntime:
             for tf in ("1", "5", "15")
         }
         s1 = snapshots["1"]
+
+        now_ms = int(time.time() * 1000)
+        last_ticker_ms = self._collector.last_ticker_ms()
+        max_ticker_delay_ms = self.config.data_quality.max_ticker_delay_sec * 1000
+        if last_ticker_ms is None or now_ms - last_ticker_ms > max_ticker_delay_ms:
+            try:
+                await self._collector.refresh_tickers()
+                ticker = self._collector.ticker(symbol)
+            except Exception:
+                logger.debug("ticker refresh failed before processing %s", symbol)
+            if ticker is None:
+                return None
+            now_ms = int(time.time() * 1000)
         bid, ask = ticker.bid_price, ticker.ask_price
 
         # manage an existing position first
@@ -721,15 +784,13 @@ class BotRuntime:
             return None
 
         # otherwise consider a new entry
-        ob = await self._collector.refresh_orderbook(symbol)
         market = MarketContext(
-            now_ms=int(time.time() * 1000),
+            now_ms=now_ms,
             last_kline_ms=self._collector.last_kline_ms(symbol, "1"),
             last_ticker_ms=self._collector.last_ticker_ms(),
-            last_orderbook_ms=self._collector.last_orderbook_ms(symbol),
             missing_candles=self._collector.missing_candles(symbol, "1"),
             ticker_price=ticker.last_price, kline_close=s1.close,
-            orderbook=ob, symbol_status="Trading",
+            symbol_status="Trading",
             next_funding_time_ms=ticker.next_funding_time_ms,
             funding_rate=ticker.funding_rate,
         )
@@ -738,12 +799,17 @@ class BotRuntime:
         meta = self._universe.get(symbol) if self._universe else None
         if meta is None:
             return None
+
+        async def load_orderbook():
+            ob = await self._collector.refresh_orderbook(symbol)
+            return ob, self._collector.last_orderbook_ms(symbol)
+
         opened = await self._trading.evaluate_entry(
             symbol=symbol, snapshots=snapshots,
             candles_1m=self._collector.store.get_with_current(symbol, "1"),
             box_high=box_high, box_low=box_low, symbol_meta=meta,
             equity=equity, entry_price=ticker.last_price, best_bid=bid, best_ask=ask,
-            market=market,
+            market=market, orderbook_provider=load_orderbook,
         )
         if opened is not None:
             if self._reconciler is not None:
@@ -754,6 +820,15 @@ class BotRuntime:
             symbol=symbol, snapshots=snapshots,
             box_high=box_high, box_low=box_low, last_price=ticker.last_price,
         )
+
+    def _kline_min_refresh_ms(self, timeframe: str) -> int:
+        if timeframe == "1":
+            return self.config.scanner.kline_1m_refresh_sec * 1000
+        if timeframe == "5":
+            return self.config.scanner.kline_5m_refresh_sec * 1000
+        if timeframe == "15":
+            return self.config.scanner.kline_15m_refresh_sec * 1000
+        return 60_000
 
     async def _current_equity(self) -> Decimal:
         if self.config.bot.mode == BotMode.LIVE:
@@ -841,7 +916,6 @@ class BotRuntime:
         from packages.config import load_app_config
 
         self.config = load_app_config(self.secrets.quantbot_config)
-        _apply_mode_env_override(self.config)
         self._build_trading()
         self._build_reconciler()
         if self._heartbeat is not None and self._lock is not None:

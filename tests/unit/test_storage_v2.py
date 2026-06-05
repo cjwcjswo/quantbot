@@ -60,6 +60,44 @@ async def test_log_position_populates_fields(session_factory):
     assert row.mark_price == "65300"
 
 
+async def test_log_position_does_not_store_reason_as_strategy_id(session_factory):
+    tl = TradeLogger(session_factory)
+    pos = Position(
+        symbol="ETHUSDT",
+        side=PositionSide.SHORT,
+        qty=Decimal("0.08"),
+        avg_entry_price=Decimal("1752.1"),
+        leverage=Decimal("3"),
+        source=PositionSource.BOT,
+        strategy_reason=(
+            "trend short gap=0.29% slope=-0.2694284172144818985341882628 "
+            "rsi5=41.43557602046379779983748088"
+        ),
+    )
+
+    await tl.log_position(pos, mode="LIVE")
+
+    row = await _one(session_factory, PositionRow)
+    assert row.strategy_id is None
+
+
+async def test_log_position_uses_position_strategy_id(session_factory):
+    tl = TradeLogger(session_factory)
+    pos = Position(
+        symbol="ETHUSDT",
+        side=PositionSide.SHORT,
+        qty=Decimal("0.08"),
+        avg_entry_price=Decimal("1752.1"),
+        strategy_id="trend_following",
+        strategy_reason="trend short gap=0.29%",
+    )
+
+    await tl.log_position(pos, mode="LIVE")
+
+    row = await _one(session_factory, PositionRow)
+    assert row.strategy_id == "trend_following"
+
+
 async def test_log_signal_entry_mode(session_factory):
     tl = TradeLogger(session_factory)
     sig = Signal(symbol="BTCUSDT", direction=SignalDirection.LONG,

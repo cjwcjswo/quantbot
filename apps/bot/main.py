@@ -8,32 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 
 from apps.bot.runtime.bot_runtime import BotRuntime
 from apps.bot.runtime.lifecycle import run_runtime
 from packages.config import load_app_config, load_secrets
-from packages.core.enums import BotMode
 from packages.observability import setup_logging
 
 logger = logging.getLogger(__name__)
-
-
-def _apply_mode_override(config) -> None:
-    """Let ``BOT_MODE`` env override the YAML mode (used by the Docker deploy).
-
-    The bot still boots to STANDBY and never trades until a START command — this
-    only selects PAPER vs LIVE execution wiring (arch §3.4, §3.5).
-    """
-    raw = os.environ.get("BOT_MODE")
-    if not raw:
-        return
-    try:
-        config.bot.mode = BotMode(raw.strip().upper())
-    except ValueError:
-        logger.warning("ignoring invalid BOT_MODE=%r (expected PAPER or LIVE)", raw)
-        return
-    logger.info("BOT_MODE override -> %s", config.bot.mode.value)
 
 
 def _configure_logging() -> None:
@@ -63,7 +44,6 @@ async def _main() -> None:
     _configure_logging()
     secrets = load_secrets()
     config = load_app_config(secrets.quantbot_config)
-    _apply_mode_override(config)
     trade_logger = await _build_trade_logger(secrets.database_url)
     runtime = BotRuntime(config, secrets, trade_logger=trade_logger)
     await run_runtime(runtime)

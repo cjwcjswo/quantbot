@@ -30,6 +30,28 @@ async def test_refresh_klines_feeds_store_and_freshness():
     assert mdc.last_kline_ms("BTCUSDT", "5") == 1_000_000
 
 
+async def test_refresh_klines_skips_when_cache_is_fresh():
+    gw = FakeGateway()
+    gw.set_kline(
+        "BTCUSDT", "1",
+        [candle(open_time_ms=i * 60_000, interval="1") for i in range(3)],
+    )
+    store = CandleStore()
+    now, box = _clock()
+    mdc = MarketDataCollector(gw, store, clock_ms=now)
+
+    assert await mdc.refresh_klines("BTCUSDT", "1", min_refresh_ms=25_000)
+    box["t"] += 10_000
+    assert not await mdc.refresh_klines("BTCUSDT", "1", min_refresh_ms=25_000)
+    box["t"] += 20_000
+    assert await mdc.refresh_klines("BTCUSDT", "1", min_refresh_ms=25_000)
+
+    assert gw.kline_calls == [
+        ("BTCUSDT", "1", 200),
+        ("BTCUSDT", "1", 200),
+    ]
+
+
 async def test_refresh_tickers_indexed_by_symbol():
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", last="100"))

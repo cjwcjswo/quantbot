@@ -38,7 +38,7 @@ async def test_status_degraded_when_redis_down(session_factory, config):
 async def test_command_503_when_redis_down(session_factory, config):
     app = _app(session_factory, config)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
-        r = await c.post("/bot/start", json={"mode": "PAPER"})
+        r = await c.post("/bot/start", json={})
     assert r.status_code == 503
     assert r.json()["error"]["code"] == "REDIS_ERROR"
 

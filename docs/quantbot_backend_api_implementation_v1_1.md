@@ -178,8 +178,11 @@ packages/
 Backend API는 Bot Engine과 별도 프로세스로 실행한다.
 
 ```bash
-uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+python -m apps.api.run
 ```
+
+`apps.api.run`은 `config/quantbot.yaml`의 `api.api_host`, `api.api_port`를 읽어
+Uvicorn을 실행한다.
 
 Docker Compose 기준:
 
@@ -187,7 +190,7 @@ Docker Compose 기준:
 services:
   api:
     build: .
-    command: uvicorn apps.api.main:app --host 0.0.0.0 --port 8000
+    command: python -m apps.api.run
     depends_on:
       - postgres
       - redis
@@ -204,34 +207,39 @@ Backend API는 Bot Engine을 직접 import해서 실행하면 안 된다.
 
 ---
 
-# 6. 환경 변수
+# 6. 환경 변수 / YAML 설정
+
+Backend API의 비밀값과 인프라 연결 정보는 `.env`, 일반 런타임 설정은
+`config/quantbot.yaml`의 `api` 섹션에서 관리한다.
 
 `.env` 예시:
 
 ```env
-APP_ENV=local
-API_HOST=0.0.0.0
-API_PORT=8000
-
 DATABASE_URL=postgresql+asyncpg://quantbot:quantbot@postgres:5432/quantbot
 REDIS_URL=redis://redis:6379/0
+QUANTBOT_CONFIG=config/quantbot.yaml
 
-CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-
-API_AUTH_ENABLED=false
 API_TOKEN_DEV=dev-token
-
-COMMAND_QUEUE_KEY=commands:bot
-BOT_STATUS_KEY=bot:status
-BOT_MODE_KEY=bot:mode
-BOT_HEARTBEAT_KEY=bot:heartbeat
-BOT_POSITIONS_KEY=bot:positions
-BOT_PNL_KEY=bot:pnl
-BOT_RISK_STATUS_KEY=bot:risk_status
-BOT_PROTECTION_STATUS_KEY=bot:protection_status
-BOT_RECONCILIATION_STATUS_KEY=bot:reconciliation_status
-BOT_EVENTS_CHANNEL=events:bot
 ```
+
+`config/quantbot.yaml` 예시:
+
+```yaml
+api:
+  app_env: "local"
+  api_host: "0.0.0.0"
+  api_port: 8000
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://127.0.0.1:5173"
+  api_auth_enabled: false
+  heartbeat_alive_sec: 15
+  api_run_maintenance: true
+```
+
+Redis key 이름은 코드의 `packages.messaging.state_keys` 및 command queue 기본값을
+사용한다.
+
 
 ---
 
@@ -420,32 +428,27 @@ Bot Engine을 STANDBY에서 RUNNING으로 전환 요청
 요청:
 
 ```json
-{
-  "mode": "PAPER"
-}
+{}
 ```
 
-허용 mode:
+실행 mode:
 
 ```text
-PAPER
-LIVE
+config/quantbot.yaml의 bot.mode 사용
 ```
 
 검증:
 
 ```text
-mode가 PAPER 또는 LIVE인지 확인
 현재 Bot 상태가 STANDBY / PAUSED / STOPPED 중 하나인지 확인
 이미 RUNNING이면 409 CONFLICT 반환
-LIVE 시작 시 live_confirm=true 필요
+현재 설정 mode가 LIVE이면 live_confirm=true 필요
 ```
 
 LIVE 요청:
 
 ```json
 {
-  "mode": "LIVE",
   "live_confirm": true
 }
 ```
@@ -454,7 +457,7 @@ LIVE 시작 조건:
 
 ```text
 live_confirm == true
-API_AUTH_ENABLED == true 권장
+config/quantbot.yaml의 api.api_auth_enabled == true 권장
 최근 heartbeat 정상
 Bot Engine이 STANDBY 또는 PAUSED
 ```
@@ -464,9 +467,7 @@ Redis 명령:
 ```json
 {
   "type": "START_BOT",
-  "payload": {
-    "mode": "PAPER"
-  }
+  "payload": {}
 }
 ```
 

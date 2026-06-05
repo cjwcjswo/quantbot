@@ -123,6 +123,7 @@ class Position(_Mut):
 
     entry_mode: EntryMode | None = None
     signal_score: Decimal = Decimal("0")
+    strategy_id: str = ""
     strategy_reason: str = ""
 
     # runtime tracking

@@ -98,12 +98,20 @@ class OrderManager:
         order_type = entry_order_type(entry_mode, self.cfg.orders)
         assert_live_new_entry_allowed(order_type, reduce_only=False, config=self.cfg.orders)
         if order_type == OrderType.AGGRESSIVE_LIMIT:
-            return await self._place_aggressive(symbol, side, qty, best_bid, best_ask)
+            return await self._place_aggressive(
+                symbol, side, qty, best_bid, best_ask, entry_mode
+            )
         price = limit_price or self._passive_limit_price(side, best_bid, best_ask)
         return await self._place_limit(symbol, side, qty, price, entry_mode)
 
     async def _place_aggressive(
-        self, symbol: str, side: Side, qty: Decimal, best_bid: Decimal, best_ask: Decimal
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        best_bid: Decimal,
+        best_ask: Decimal,
+        entry_mode: EntryMode,
     ) -> OrderOutcome:
         price = aggressive_limit_price(
             side, best_ask, best_bid, Decimal(str(self.cfg.orders.max_slippage_percent))
@@ -114,7 +122,7 @@ class OrderManager:
                 symbol=symbol, side=side, order_type=OrderType.AGGRESSIVE_LIMIT,
                 qty=qty, price=price, time_in_force=TimeInForce.IOC, client_order_id=cid,
             ),
-            entry_mode=EntryMode.BREAKOUT_CONFIRM,
+            entry_mode=entry_mode,
         )
         filled = res.filled_qty
         if filled <= 0:

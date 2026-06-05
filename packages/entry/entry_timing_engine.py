@@ -207,24 +207,25 @@ class EntryTimingEngine:
         atr100 = avg_true_range(ctx.candles_1m, 100)
         if atr20 is None or atr100 is None or atr20 >= atr100:  # compression required
             return False
+        scout = self.cfg.entry.pre_breakout
         exhaustion_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
-        if not (Decimal("1.15") <= vol < exhaustion_vr):
+        if not (Decimal(str(scout.min_volume_ratio)) <= vol < exhaustion_vr):
             return False
-        dist_limit = Decimal("0.35") * atr1
+        dist_limit = Decimal(str(scout.max_distance_to_box_atr)) * atr1
         m = metrics_of(last)
         if is_long:
             if not (ctx.box_high - last.close <= dist_limit and last.close <= ctx.box_high):
                 return False
             if count_rising_lows(ctx.candles_1m) < 2:
                 return False
-            if not (Decimal("48") <= rsi <= Decimal("62")):
+            if not (Decimal(str(scout.long_rsi_min)) <= rsi <= Decimal(str(scout.long_rsi_max))):
                 return False
             return self.anti_chase.block_long(ctx.snapshot_1m, ctx.candles_1m, m) is None
         if not (last.close - ctx.box_low <= dist_limit and last.close >= ctx.box_low):
             return False
         if count_falling_highs(ctx.candles_1m) < 2:
             return False
-        if not (Decimal("38") <= rsi <= Decimal("52")):
+        if not (Decimal(str(scout.short_rsi_min)) <= rsi <= Decimal(str(scout.short_rsi_max))):
             return False
         return self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m) is None
 
@@ -235,6 +236,7 @@ class EntryTimingEngine:
         formula). Points reward trend strength, slope, RSI position, proximity to
         the box, volatility compression and volume."""
         s15 = ctx.snapshot_15m
+        scout = self.cfg.entry.pre_breakout
         score = Decimal(0)
 
         # trend gap (15m)
@@ -242,29 +244,29 @@ class EntryTimingEngine:
             gap = (
                 (s15.ema20 - s15.ema50) if is_long else (s15.ema50 - s15.ema20)
             ) / s15.close * Decimal(100)
-            score += Decimal(2) if gap >= Decimal("0.30") else Decimal(1)
+            score += Decimal(2) if gap >= Decimal(str(scout.score_gap_high_percent_15m)) else Decimal(1)
 
         # slope (15m, ATR units)
         slope = s15.ema20_slope_atr
         if slope is not None:
             mag = slope if is_long else -slope
-            score += Decimal(2) if mag >= Decimal("0.10") else Decimal(1)
+            score += Decimal(2) if mag >= Decimal(str(scout.score_slope_high_atr_15m)) else Decimal(1)
 
         # 1m RSI centred
         rsi = ctx.snapshot_1m.rsi14
         if rsi is not None:
             centred = (
-                Decimal("50") <= rsi <= Decimal("60")
+                Decimal(str(scout.score_long_rsi_center_min)) <= rsi <= Decimal(str(scout.score_long_rsi_center_max))
                 if is_long
-                else Decimal("40") <= rsi <= Decimal("50")
+                else Decimal(str(scout.score_short_rsi_center_min)) <= rsi <= Decimal(str(scout.score_short_rsi_center_max))
             )
             score += Decimal(1) if centred else Decimal(0)
 
         # proximity to box
         dist = (ctx.box_high - last.close) if is_long else (last.close - ctx.box_low)
-        if dist <= Decimal("0.20") * atr1:
+        if dist <= Decimal(str(scout.score_near_box_atr)) * atr1:
             score += Decimal(2)
-        elif dist <= Decimal("0.35") * atr1:
+        elif dist <= Decimal(str(scout.score_mid_box_atr)) * atr1:
             score += Decimal(1)
 
         # volatility compression
@@ -272,11 +274,11 @@ class EntryTimingEngine:
         atr100 = avg_true_range(ctx.candles_1m, 100)
         if atr20 is not None and atr100 is not None and atr100 > 0:
             ratio = atr20 / atr100
-            score += Decimal(2) if ratio <= Decimal("0.8") else Decimal(1)
+            score += Decimal(2) if ratio <= Decimal(str(scout.score_compression_ratio)) else Decimal(1)
 
         # volume
         vol = ctx.snapshot_1m.volume_ratio
         if vol is not None:
-            score += Decimal(2) if vol >= Decimal("2.0") else Decimal(1)
+            score += Decimal(2) if vol >= Decimal(str(scout.score_high_volume_ratio)) else Decimal(1)
 
         return min(score, Decimal(10))
