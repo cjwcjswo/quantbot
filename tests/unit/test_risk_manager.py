@@ -9,15 +9,27 @@ from packages.risk import RiskContext, RiskManager
 from tests.fakes.builders import symbol_meta
 
 
-def _decision(stop_atr="1.0", mode=EntryMode.BREAKOUT_CONFIRM, frac="0.30", symbol="BTCUSDT"):
+def _decision(
+    stop_atr="1.0",
+    mode=EntryMode.BREAKOUT_CONFIRM,
+    frac="0.30",
+    symbol="BTCUSDT",
+    direction=SignalDirection.LONG,
+    structure_stop_price=None,
+):
     return EntryDecision(
         symbol=symbol,
-        direction=SignalDirection.LONG,
+        direction=direction,
         entry_mode=mode,
         position_fraction=Decimal(frac),
         stop_atr=Decimal(stop_atr),
         score=Decimal("7"),
         reason="test",
+        structure_stop_price=(
+            Decimal(str(structure_stop_price))
+            if structure_stop_price is not None
+            else None
+        ),
     )
 
 
@@ -67,12 +79,110 @@ def test_tpsl_prices_are_rounded_to_tick(config):
 
 def test_stop_too_tight(config):
     d = _approve(config, decision=_decision(stop_atr="0.3"))
-    assert not d.approved and d.reason == "STOP_TOO_TIGHT"
+    assert not d.approved and d.reason == "STOP_DISTANCE_TOO_NARROW"
 
 
 def test_stop_too_wide(config):
     d = _approve(config, decision=_decision(stop_atr="2.0"))
-    assert not d.approved and d.reason == "STOP_TOO_WIDE"
+    assert not d.approved and d.reason == "STOP_DISTANCE_TOO_WIDE"
+
+
+def test_retest_uses_retest_max_stop_distance_guard(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.7",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+        ),
+    )
+    assert d.approved
+    assert d.stop_loss_price == Decimal("98.3")
+
+
+def test_retest_rejects_above_retest_max_stop_distance(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.9",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+        ),
+    )
+    assert not d.approved
+    assert d.reason == "STOP_DISTANCE_TOO_WIDE"
+    assert d.stop_metadata["risk_reject_reason"] == "STOP_DISTANCE_TOO_WIDE"
+
+
+def test_short_structure_stop_higher_than_atr_stop_is_selected(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.3",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+            direction=SignalDirection.SHORT,
+            structure_stop_price="101.8",
+        ),
+    )
+    assert d.approved
+    assert d.stop_loss_price == Decimal("101.8")
+    assert d.stop_metadata["atr_stop_price"] == "101.3"
+    assert d.stop_metadata["structure_stop_price"] == "101.8"
+    assert d.stop_metadata["selected_stop_price"] == "101.8"
+
+
+def test_long_structure_stop_lower_than_atr_stop_is_selected(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.3",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+            structure_stop_price="98.2",
+        ),
+    )
+    assert d.approved
+    assert d.stop_loss_price == Decimal("98.2")
+    assert d.stop_metadata["atr_stop_price"] == "98.7"
+    assert d.stop_metadata["structure_stop_price"] == "98.2"
+    assert d.stop_metadata["selected_stop_price"] == "98.2"
+
+
+def test_retest_structure_unavailable_uses_atr_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.3",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+        ),
+    )
+    assert d.approved
+    assert d.stop_loss_price == Decimal("98.7")
+    assert "structure_stop_price" not in d.stop_metadata
+
+
+def test_wider_retest_stop_reduces_qty(config):
+    tight = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+        ),
+    )
+    wide = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.3",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.40",
+        ),
+    )
+
+    assert tight.approved and wide.approved
+    assert wide.qty < tight.qty
 
 
 def test_daily_loss_blocks(config):

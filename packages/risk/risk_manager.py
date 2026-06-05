@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from packages.config.settings import AppConfig
-from packages.core.enums import PositionSide, SignalDirection
+from packages.core.enums import EntryMode, PositionSide, SignalDirection
 from packages.core.errors import RiskRejection
 from packages.core.models import Position, SymbolMeta
 from packages.entry.entry_timing_engine import EntryDecision
@@ -43,10 +43,14 @@ class RiskDecision:
     take_profit_price: Decimal | None = None
     liq_price: Decimal | None = None
     risk_usdt: Decimal = Decimal(0)
+    stop_metadata: dict[str, object] | None = None
 
 
-def _reject(reason: str) -> RiskDecision:
-    return RiskDecision(approved=False, reason=reason)
+def _reject(
+    reason: str,
+    stop_metadata: dict[str, object] | None = None,
+) -> RiskDecision:
+    return RiskDecision(approved=False, reason=reason, stop_metadata=stop_metadata)
 
 
 def _position_risk(p: Position) -> Decimal:
@@ -75,33 +79,50 @@ class RiskManager:
             else PositionSide.SHORT
         )
 
-        if atr <= 0 or entry_price <= 0:
-            return _reject("INVALID_MARKET_DATA")
+        stop_metadata = dict(decision.stop_metadata or {})
 
-        stop = round_price_to_tick(
+        if atr <= 0 or entry_price <= 0:
+            return _reject("INVALID_MARKET_DATA", stop_metadata)
+
+        atr_stop = round_price_to_tick(
             stop_loss_price(entry_price, atr, decision.stop_atr, side),
             symbol_meta.tick_size,
+        )
+        structure_stop = self._structure_stop_price(decision, symbol_meta)
+        stop = self._select_stop(side, atr_stop, structure_stop)
+        stop_metadata = self._with_stop_metadata(
+            decision=decision,
+            side=side,
+            entry_price=entry_price,
+            atr=atr,
+            atr_stop=atr_stop,
+            structure_stop=structure_stop,
+            selected_stop=stop,
+            metadata=stop_metadata,
         )
 
         # Stop Distance Guard (§13.2)
         stop_distance_atr = abs(entry_price - stop) / atr
+        max_stop_distance_atr = self._max_stop_distance_atr(decision.entry_mode)
         if stop_distance_atr < Decimal(str(risk.min_stop_distance_atr)):
-            return _reject("STOP_TOO_TIGHT")
-        if stop_distance_atr > Decimal(str(risk.max_stop_distance_atr)):
-            return _reject("STOP_TOO_WIDE")
+            stop_metadata["risk_reject_reason"] = "STOP_DISTANCE_TOO_NARROW"
+            return _reject("STOP_DISTANCE_TOO_NARROW", stop_metadata)
+        if stop_distance_atr > max_stop_distance_atr:
+            stop_metadata["risk_reject_reason"] = "STOP_DISTANCE_TOO_WIDE"
+            return _reject("STOP_DISTANCE_TOO_WIDE", stop_metadata)
 
         # Account-level blocks
         if ctx.daily_loss_percent >= Decimal(str(risk.daily_max_loss_percent)):
-            return _reject("DAILY_LOSS_LIMIT")
+            return _reject("DAILY_LOSS_LIMIT", stop_metadata)
         if ctx.intraday_drawdown_percent >= Decimal(str(risk.intraday_drawdown_percent)):
-            return _reject("INTRADAY_DRAWDOWN")
+            return _reject("INTRADAY_DRAWDOWN", stop_metadata)
         if len(ctx.open_positions) >= self.cfg.bot.max_active_positions:
-            return _reject("MAX_POSITIONS")
+            return _reject("MAX_POSITIONS", stop_metadata)
         if any(p.symbol == decision.symbol for p in ctx.open_positions):
-            return _reject("SYMBOL_ALREADY_OPEN")
+            return _reject("SYMBOL_ALREADY_OPEN", stop_metadata)
         same_dir = sum(1 for p in ctx.open_positions if p.side == side)
         if same_dir >= risk.max_same_direction_positions:
-            return _reject("MAX_SAME_DIRECTION")
+            return _reject("MAX_SAME_DIRECTION", stop_metadata)
 
         # Leverage cap (§13.3)
         lev_cap = max_leverage(
@@ -127,21 +148,21 @@ class RiskManager:
                 max_notional=max_notional,
             )
         except RiskRejection as exc:
-            return _reject(exc.reason)
+            return _reject(exc.reason, stop_metadata)
 
         if not meets_min_qty(sizing.qty, symbol_meta):
-            return _reject("BELOW_MIN_QTY")
+            return _reject("BELOW_MIN_QTY", stop_metadata)
         if not meets_min_notional(sizing.qty, entry_price, symbol_meta):
-            return _reject("BELOW_MIN_NOTIONAL")
+            return _reject("BELOW_MIN_NOTIONAL", stop_metadata)
 
         # Risk exposure limits
         symbol_risk_pct = sizing.risk_usdt / ctx.equity * Decimal(100)
         if symbol_risk_pct > Decimal(str(risk.max_symbol_risk_percent)):
-            return _reject("SYMBOL_RISK_EXCEEDED")
+            return _reject("SYMBOL_RISK_EXCEEDED", stop_metadata)
         total_risk = sum((_position_risk(p) for p in ctx.open_positions), Decimal(0))
         total_risk_pct = (total_risk + sizing.risk_usdt) / ctx.equity * Decimal(100)
         if total_risk_pct > Decimal(str(risk.max_total_open_risk_percent)):
-            return _reject("TOTAL_RISK_EXCEEDED")
+            return _reject("TOTAL_RISK_EXCEEDED", stop_metadata)
 
         # Leverage to set, and Liquidation Guard (§13.4)
         leverage = choose_leverage(
@@ -156,13 +177,13 @@ class RiskManager:
         if liq_distance / entry_price * Decimal(100) < Decimal(
             str(guard.min_liquidation_distance_percent)
         ):
-            return _reject("LIQ_TOO_CLOSE_PCT")
+            return _reject("LIQ_TOO_CLOSE_PCT", stop_metadata)
         if liq_distance / atr < Decimal(str(guard.min_liquidation_distance_atr)):
-            return _reject("LIQ_TOO_CLOSE_ATR")
+            return _reject("LIQ_TOO_CLOSE_ATR", stop_metadata)
         if guard.block_if_liq_price_inside_stop and self._liq_inside_stop(
             side, liq, stop
         ):
-            return _reject("LIQ_INSIDE_STOP")
+            return _reject("LIQ_INSIDE_STOP", stop_metadata)
 
         take_profit = round_price_to_tick(
             take_profit_price(
@@ -184,7 +205,86 @@ class RiskManager:
             take_profit_price=take_profit,
             liq_price=liq,
             risk_usdt=sizing.risk_usdt,
+            stop_metadata=stop_metadata,
         )
+
+    def _structure_stop_price(
+        self, decision: EntryDecision, symbol_meta: SymbolMeta
+    ) -> Decimal | None:
+        if decision.entry_mode != EntryMode.RETEST_CONFIRM:
+            return None
+        if decision.structure_stop_price is None:
+            return None
+        if not self._structure_stop_enabled(decision.entry_mode):
+            return None
+        return round_price_to_tick(decision.structure_stop_price, symbol_meta.tick_size)
+
+    def _structure_stop_enabled(self, entry_mode: EntryMode) -> bool:
+        c = self.cfg.structure_stop
+        if not c.enabled:
+            return False
+        if entry_mode == EntryMode.RETEST_CONFIRM and not c.use_structure_stop_for_retest:
+            return False
+        return entry_mode.value in set(c.apply_to_entry_modes)
+
+    @staticmethod
+    def _select_stop(
+        side: PositionSide, atr_stop: Decimal, structure_stop: Decimal | None
+    ) -> Decimal:
+        if structure_stop is None:
+            return atr_stop
+        if side == PositionSide.LONG:
+            return min(atr_stop, structure_stop)
+        return max(atr_stop, structure_stop)
+
+    def _max_stop_distance_atr(self, entry_mode: EntryMode) -> Decimal:
+        if entry_mode == EntryMode.RETEST_CONFIRM:
+            limit = Decimal(str(self.cfg.risk.retest_max_stop_distance_atr))
+            if self._structure_stop_enabled(entry_mode):
+                limit = min(
+                    limit,
+                    Decimal(str(self.cfg.structure_stop.max_stop_distance_atr)),
+                )
+            return limit
+        return Decimal(str(self.cfg.risk.max_stop_distance_atr))
+
+    def _with_stop_metadata(
+        self,
+        *,
+        decision: EntryDecision,
+        side: PositionSide,
+        entry_price: Decimal,
+        atr: Decimal,
+        atr_stop: Decimal,
+        structure_stop: Decimal | None,
+        selected_stop: Decimal,
+        metadata: dict[str, object],
+    ) -> dict[str, object]:
+        stop_distance_atr = abs(entry_price - selected_stop) / atr
+        stop_distance_percent = (
+            abs(entry_price - selected_stop) / entry_price * Decimal(100)
+        )
+        out = dict(metadata)
+        out.update(
+            {
+                "entry_mode": decision.entry_mode.value,
+                "symbol": decision.symbol,
+                "side": side.value,
+                "atr_percent_1m": str(self._atr_percent(atr, entry_price)),
+                "resolved_stop_atr": str(decision.stop_atr),
+                "atr_stop_price": str(atr_stop),
+                "structure_stop_enabled": self._structure_stop_enabled(
+                    decision.entry_mode
+                ),
+                "structure_stop_price": str(structure_stop)
+                if structure_stop is not None
+                else None,
+                "selected_stop_price": str(selected_stop),
+                "stop_distance_atr": str(stop_distance_atr),
+                "stop_distance_percent": str(stop_distance_percent),
+            }
+        )
+        return {k: v for k, v in out.items() if v is not None}
 
     @staticmethod
     def _atr_percent(atr: Decimal, price: Decimal) -> Decimal:

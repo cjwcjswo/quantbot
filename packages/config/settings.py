@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from packages.core.enums import BotMode, BotState
@@ -150,7 +150,7 @@ class RetestConfirmEntry(_Section):
     position_fraction: float = 0.40
     retest_tolerance_atr: float = 0.35
     max_wait_candles: int = 10
-    stop_atr: float = 1.0
+    stop_atr: float = 1.3
 
 
 class AntiChaseEntry(_Section):
@@ -169,6 +169,33 @@ class EntrySection(_Section):
     breakout_confirm: BreakoutConfirmEntry = BreakoutConfirmEntry()
     retest_confirm: RetestConfirmEntry = RetestConfirmEntry()
     anti_chase: AntiChaseEntry = AntiChaseEntry()
+
+
+class RetestAtrPercentTier(_Section):
+    max_atr_percent: float
+    stop_atr: float
+
+
+class VolatilityAdaptiveStopSection(_Section):
+    enabled: bool = True
+    retest_atr_percent_tiers: list[RetestAtrPercentTier] = Field(
+        default_factory=lambda: [
+            RetestAtrPercentTier(max_atr_percent=0.25, stop_atr=1.0),
+            RetestAtrPercentTier(max_atr_percent=0.60, stop_atr=1.3),
+            RetestAtrPercentTier(max_atr_percent=999.0, stop_atr=1.5),
+        ]
+    )
+
+
+class StructureStopSection(_Section):
+    enabled: bool = True
+    apply_to_entry_modes: list[str] = Field(
+        default_factory=lambda: ["RETEST_CONFIRM"]
+    )
+    buffer_atr: float = 0.10
+    max_stop_distance_atr: float = 1.8
+    min_stop_distance_atr: float = 0.5
+    use_structure_stop_for_retest: bool = True
 
 
 class OrdersSection(_Section):
@@ -209,6 +236,7 @@ class RiskSection(_Section):
     daily_loss_max_leverage: int = 2
     min_stop_distance_atr: float = 0.5
     max_stop_distance_atr: float = 1.5
+    retest_max_stop_distance_atr: float = 1.8
     isolated_margin: bool = True
 
 
@@ -369,6 +397,10 @@ class AppConfig(_Section):
     volume: VolumeSection = VolumeSection()
     candle_quality: CandleQualitySection = CandleQualitySection()
     entry: EntrySection = EntrySection()
+    volatility_adaptive_stop: VolatilityAdaptiveStopSection = (
+        VolatilityAdaptiveStopSection()
+    )
+    structure_stop: StructureStopSection = StructureStopSection()
     orders: OrdersSection = OrdersSection()
     risk: RiskSection = RiskSection()
     liquidation_guard: LiquidationGuardSection = LiquidationGuardSection()

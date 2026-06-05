@@ -35,6 +35,12 @@ def test_loads_repo_config():
     assert cfg.entry.pre_breakout.require_compression is False
     assert cfg.entry.pre_breakout.no_compression_min_score == 7
     assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.20
+    assert cfg.entry.retest_confirm.stop_atr == 1.3
+    assert cfg.volatility_adaptive_stop.enabled is True
+    assert cfg.volatility_adaptive_stop.retest_atr_percent_tiers[1].stop_atr == 1.3
+    assert cfg.structure_stop.enabled is True
+    assert cfg.structure_stop.apply_to_entry_modes == ["RETEST_CONFIRM"]
+    assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 
 

@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from packages.core.enums import EntryMode, SignalDirection
 from packages.entry import EntryTimingEngine
-from packages.entry.entry_timing_engine import EntryContext
+from packages.entry.entry_timing_engine import EntryContext, resolve_retest_stop_atr
 from tests.fakes.builders import candle
 from tests.fakes.builders import indicator_snapshot as snap
 
@@ -75,10 +75,85 @@ def test_exhaustion_breakout_then_retest(config):
     # retest candle: pulls back to the level (100) and holds, close > open
     retest = candle(interval="1", o="99.95", h="100.1", l="99.9", c="100.01")
     candles.append(retest)
-    decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
+    decision = eng.evaluate(
+        _ctx(
+            candles_1m=candles,
+            box_high="100",
+            s1_kwargs={"atr_percent": "0.41"},
+        )
+    )
     assert decision is not None
     assert decision.entry_mode == EntryMode.RETEST_CONFIRM
     assert decision.position_fraction == Decimal("0.40")
+    assert decision.stop_atr == Decimal("1.3")
+
+
+def test_retest_adaptive_stop_atr_tiers(config):
+    assert resolve_retest_stop_atr(
+        Decimal("0.20"),
+        Decimal(str(config.entry.retest_confirm.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("1.0")
+    assert resolve_retest_stop_atr(
+        Decimal("0.41"),
+        Decimal(str(config.entry.retest_confirm.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("1.3")
+    assert resolve_retest_stop_atr(
+        Decimal("0.75"),
+        Decimal(str(config.entry.retest_confirm.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("1.5")
+
+
+def test_retest_short_structure_stop_from_recent_high(config):
+    config.entry.enabled_modes.pre_breakout_scout = False
+    eng = EntryTimingEngine(config)
+    eng.retests.register("BTCUSDT", SignalDirection.SHORT, Decimal("98"))
+    candles = _flat(4, price="98")
+    candles.append(candle(interval="1", o="98.1", h="98.4", l="97.8", c="97.98"))
+
+    decision = eng.evaluate(
+        _ctx(
+            candles_1m=candles,
+            box_low="98",
+            direction=SignalDirection.SHORT,
+            s1_kwargs={"atr": "1", "atr_percent": "0.41", "rsi": "40"},
+        )
+    )
+
+    assert decision is not None
+    assert decision.entry_mode == EntryMode.RETEST_CONFIRM
+    assert decision.stop_atr == Decimal("1.3")
+    assert decision.structure_stop_price == Decimal("98.5")
+    assert decision.stop_metadata["adaptive_stop_tier"] == "0.25-0.60"
+    assert decision.stop_metadata["retest_swing_high"] == "98.4"
+
+
+def test_retest_structure_unavailable_uses_atr_only(config):
+    config.structure_stop.enabled = True
+    eng = EntryTimingEngine(config)
+    ctx = _ctx(candles_1m=_flat(3), s1_kwargs={"atr_percent": "0.41"})
+    ctx = EntryContext(
+        symbol=ctx.symbol,
+        direction=ctx.direction,
+        snapshot_1m=ctx.snapshot_1m,
+        snapshot_5m=ctx.snapshot_5m,
+        snapshot_15m=ctx.snapshot_15m,
+        candles_1m=[],
+        box_high=ctx.box_high,
+        box_low=ctx.box_low,
+        signal_score=ctx.signal_score,
+    )
+
+    decision = eng._retest_decision(
+        ctx,
+        candle(interval="1", o="100", h="100", l="100", c="100"),
+        Decimal("1"),
+    )
+
+    assert decision.structure_stop_price is None
+    assert decision.stop_metadata["structure_stop_warning"] == "STRUCTURE_STOP_UNAVAILABLE"
 
 
 def test_no_breakout_no_pending_no_entry(config):

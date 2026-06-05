@@ -12,14 +12,23 @@ from packages.messaging import CommandType, state_keys
 
 CONFIG_SECTIONS = (
     "bot", "paper", "universe", "scanner", "trend_quality", "volume",
-    "candle_quality", "entry", "orders", "risk", "liquidation_guard",
+    "candle_quality", "entry", "volatility_adaptive_stop", "structure_stop",
+    "orders", "risk", "liquidation_guard",
     "tpsl", "position_protection", "position", "stagnation_exit",
     "cooldown", "global_kill_switch", "reconciliation",
     "manual_intervention", "data_quality", "funding_guard",
 )
 ALLOWED_TOP = {*CONFIG_SECTIONS, "strategy", "leverage", "stop_loss"}
 # patches touching these are blocked while a position is open (§15.2)
-RISK_TOP = {"risk", "leverage", "stop_loss", "tpsl", "position_protection"}
+RISK_TOP = {
+    "risk",
+    "leverage",
+    "stop_loss",
+    "tpsl",
+    "position_protection",
+    "volatility_adaptive_stop",
+    "structure_stop",
+}
 RISK_SUBKEY_HINTS = ("leverage", "stop_loss", "account_risk")
 
 

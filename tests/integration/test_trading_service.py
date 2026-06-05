@@ -13,7 +13,7 @@ from apps.bot.workers.trading_pipeline import (
     TradingService,
 )
 from packages.core.enums import BotMode, BotState, PositionStatus
-from packages.core.enums import EntryMode, PositionSide, PositionSource
+from packages.core.enums import EntryMode, PositionSide, PositionSource, SignalDirection
 from packages.core.models import ExchangePosition, Position
 from packages.core.models import OrderBook, OrderBookLevel
 from packages.entry import EntryTimingEngine
@@ -50,6 +50,28 @@ def _candles():
     flats = [candle(interval="1", open_time_ms=i * 60_000, o="100", h="100.2",
                     l="99.8", c="100") for i in range(5)]
     return flats + [candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0")]
+
+
+def _short_retest_snapshots():
+    return {
+        "15": snap(timeframe="15", close="98", ema20="99", ema50="101",
+                   slope="-0.2", atr="1", atr_percent="1.5"),
+        "5": snap(timeframe="5", close="98.5", ema20="99", ema50="101",
+                  rsi="40", atr="1", atr_percent="1.5", volume_ratio="1.0"),
+        "1": snap(timeframe="1", close="99.98", ema20="100.5", atr="1",
+                  atr_percent="0.41", rsi="40", volume_ratio="2.0"),
+    }
+
+
+def _short_retest_candles():
+    flats = [
+        candle(interval="1", open_time_ms=i * 60_000, o="100", h="100.2",
+               l="99.8", c="100")
+        for i in range(4)
+    ]
+    return flats + [
+        candle(interval="1", o="100.1", h="101.7", l="97.8", c="99.98")
+    ]
 
 
 def _make_service(
@@ -250,6 +272,46 @@ async def test_live_entry_protected_then_active(config, events):
     assert gw.trading_stops == []
     from packages.core.events import BotEventType
     assert BotEventType.TPSL_VERIFIED in events.types()
+
+
+async def test_live_retest_exchange_sl_uses_selected_structure_stop(config, events):
+    config.bot.mode = BotMode.LIVE
+    gw = FakeGateway()
+    gw.fill_ratio = Decimal("1")
+    om = OrderManager(gw, config)
+    bus = EventBus(redis=None, sink=events)
+    ppm = PositionProtectionManager(gw, om, bus, config, sleep=_noop_sleep)
+    service = _make_service(
+        config, mode=BotMode.LIVE, executor=LiveExecutor(gw, om),
+        protection=ppm, events=events,
+    )
+    service._entry.retests.register(
+        "BTCUSDT", SignalDirection.SHORT, Decimal("100")
+    )
+
+    pos = await service.evaluate_entry(
+        symbol="BTCUSDT",
+        snapshots=_short_retest_snapshots(),
+        candles_1m=_short_retest_candles(),
+        box_high=Decimal("102"),
+        box_low=Decimal("100"),
+        symbol_meta=symbol_meta(symbol="BTCUSDT", min_qty="0.001"),
+        equity=Decimal("10000"),
+        entry_price=Decimal("100"),
+        best_bid=Decimal("99.98"),
+        best_ask=Decimal("100.0"),
+    )
+
+    assert pos is not None
+    assert pos.entry_mode == EntryMode.RETEST_CONFIRM
+    assert pos.stop_loss_price == Decimal("101.8")
+    assert gw.placed_orders[0].stop_loss == Decimal("101.8")
+    assert gw.trading_stops == []
+    from packages.core.events import BotEventType
+    opened = events.of_type(BotEventType.POSITION_OPENED)[0]
+    assert opened.data["selected_stop_price"] == "101.8"
+    assert opened.data["structure_stop_price"] == "101.8"
+    assert opened.data["resolved_stop_atr"] == "1.3"
 
 
 async def test_live_entry_blocked_when_tpsl_fails(config, events):

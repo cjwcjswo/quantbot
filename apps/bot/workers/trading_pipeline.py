@@ -19,6 +19,7 @@ from packages.config.settings import AppConfig
 from packages.core.enums import (
     BotMode,
     BotState,
+    EntryMode,
     ExitReason,
     OrderType,
     PositionSide,
@@ -497,7 +498,7 @@ class TradingService:
                 failed_stage="risk",
                 reason_code="RISK_REJECTED",
                 entry_mode_candidate=decision.entry_mode.value,
-                extra={"risk_reason": rd.reason},
+                extra={"risk_reason": rd.reason, **(rd.stop_metadata or {})},
             )
             await self._emit(BotEvent(type=BotEventType.SIGNAL, symbol=symbol,
                                       message=f"rejected: {rd.reason}"))
@@ -607,6 +608,8 @@ class TradingService:
             "mode": decision.entry_mode.value,
             "position_fraction": str(decision.position_fraction),
         }
+        if decision.entry_mode == EntryMode.RETEST_CONFIRM and rd.stop_metadata:
+            opened_data.update(rd.stop_metadata)
         if decision.compression_mode is not None:
             opened_data.update(
                 {
