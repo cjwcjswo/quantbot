@@ -64,6 +64,11 @@ def _opt_dec(value: object) -> Decimal | None:
     return Decimal(str(value))
 
 
+def _is_order_missing_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "ErrCode: 110001" in text or "retCode=110001" in text
+
+
 class BybitExchangeGateway:
     """Concrete :class:`~packages.exchange.gateway.ExchangeGateway` for Bybit."""
 
@@ -542,7 +547,21 @@ class BybitExchangeGateway:
             params["orderLinkId"] = client_order_id
         else:
             raise OrderError("cancel_order requires order_id or client_order_id")
-        await self._order_rest(self._http.cancel_order, **params)
+
+        async def call():
+            async with self._order_limiter:
+                try:
+                    return await asyncio.to_thread(self._http.cancel_order, **params)
+                except Exception as exc:
+                    if _is_order_missing_error(exc):
+                        logger.info("cancel_order already settled for %s", symbol)
+                        return {"retCode": 0, "result": {}}
+                    raise
+
+        resp = await with_backoff(
+            call, retries=1, base_sec=self._backoff_base, max_sec=self._backoff_max
+        )
+        self._unwrap(resp)
 
     # ------------------------------------------------------------------ #
     # TP/SL protection

@@ -11,7 +11,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from packages.core.events import BotEvent
@@ -86,30 +86,87 @@ class TradeLogger:
         mode: str | None = None,
         source: str | None = None,
     ) -> None:
-        await self._add(
-            OrderRow(
-                symbol=order.symbol,
-                side=order.side.value,
-                order_type=order.order_type.value,
-                qty=str(order.qty),
-                price=str(order.price) if order.price is not None else None,
-                status=order.status.value,
-                client_order_id=order.client_order_id,
+        row_data = {
+            "symbol": order.symbol,
+            "side": order.side.value,
+            "order_type": order.order_type.value,
+            "qty": str(order.qty),
+            "price": str(order.price) if order.price is not None else None,
+            "status": order.status.value,
+            "client_order_id": order.client_order_id,
+            "order_id": order.order_id,
+            "reduce_only": order.reduce_only,
+            "entry_mode": order.entry_mode.value if order.entry_mode else None,
+            "source": source or getattr(order.source, "value", None),
+            "mode": mode,
+            "filled_qty": str(order.filled_qty)
+            if getattr(order, "filled_qty", None) is not None
+            else None,
+            "avg_fill_price": str(order.avg_fill_price)
+            if getattr(order, "avg_fill_price", None) is not None
+            else None,
+            "created_at": getattr(order, "created_at", None),
+            "updated_at": _utcnow(),
+        }
+        async with self._sf() as session:
+            existing = await self._find_order_row(
+                session,
                 order_id=order.order_id,
-                reduce_only=order.reduce_only,
-                entry_mode=order.entry_mode.value if order.entry_mode else None,
-                source=source or getattr(order.source, "value", None),
-                mode=mode,
-                filled_qty=str(order.filled_qty)
-                if getattr(order, "filled_qty", None) is not None
-                else None,
-                avg_fill_price=str(order.avg_fill_price)
-                if getattr(order, "avg_fill_price", None) is not None
-                else None,
-                created_at=getattr(order, "created_at", None),
-                updated_at=_utcnow(),
+                client_order_id=order.client_order_id,
             )
-        )
+            if existing is None:
+                session.add(OrderRow(**row_data))
+            else:
+                for key, value in row_data.items():
+                    setattr(existing, key, value)
+            await session.commit()
+
+    async def update_order_status(
+        self,
+        *,
+        order_id: str | None = None,
+        client_order_id: str | None = None,
+        status: str,
+        filled_qty: str | None = None,
+        avg_fill_price: str | None = None,
+    ) -> bool:
+        async with self._sf() as session:
+            row = await self._find_order_row(
+                session, order_id=order_id, client_order_id=client_order_id
+            )
+            if row is None:
+                return False
+            row.status = status
+            if filled_qty is not None:
+                row.filled_qty = filled_qty
+            if avg_fill_price is not None:
+                row.avg_fill_price = avg_fill_price
+            row.updated_at = _utcnow()
+            await session.commit()
+            return True
+
+    async def _find_order_row(
+        self,
+        session,
+        *,
+        order_id: str | None = None,
+        client_order_id: str | None = None,
+    ) -> OrderRow | None:
+        filters = []
+        if order_id:
+            filters.append(OrderRow.order_id == order_id)
+        if client_order_id:
+            filters.append(OrderRow.client_order_id == client_order_id)
+        if not filters:
+            return None
+        return (
+            await session.execute(
+                select(OrderRow)
+                .where(or_(*filters))
+                .order_by(OrderRow.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
     async def log_fill(
         self,

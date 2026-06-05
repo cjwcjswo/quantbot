@@ -33,6 +33,7 @@ def test_long_not_blocked_when_calm(config):
 
 
 def test_long_blocked_overbought(config):
+    config.entry.anti_chase.max_rsi_long = 72
     ac = AntiChase(config)
     candles = _flat_1m()
     s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="73", volume_ratio="1.0")
@@ -47,6 +48,7 @@ def test_long_blocked_far_above_ema(config):
 
 
 def test_long_blocked_single_candle_spike(config):
+    config.entry.anti_chase.max_single_candle_move_atr = 1.3
     ac = AntiChase(config)
     # Flats near 101 keep the 3-candle run-up small so the single-candle rule fires.
     candles = _flat_1m(price="101")
@@ -67,6 +69,7 @@ def test_long_blocked_weak_close(config):
 
 
 def test_short_blocked_oversold(config):
+    config.entry.anti_chase.min_rsi_short = 28
     ac = AntiChase(config)
     candles = _flat_1m()
     s = snap(timeframe="1", close="100", ema20="100", atr="1", rsi="27", volume_ratio="1.0")

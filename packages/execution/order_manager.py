@@ -169,7 +169,6 @@ class OrderManager:
                     request,
                     res.model_copy(update={"status": OrderStatus.CANCELLED}),
                     entry_mode,
-                    persist=False,
                 )
                 continue  # 0% within TTL -> cancel and maybe reorder
             if filled < qty:
@@ -178,7 +177,6 @@ class OrderManager:
                     request,
                     res.model_copy(update={"status": OrderStatus.CANCELLED}),
                     entry_mode,
-                    persist=False,
                 )
                 return OrderOutcome("PARTIAL", filled, res.avg_fill_price, res.order_id, cid)
             return OrderOutcome("FILLED", filled, res.avg_fill_price, res.order_id, cid)

@@ -56,7 +56,7 @@ def test_healthy_breakout_returns_breakout_confirm(config):
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.BREAKOUT_CONFIRM
-    assert decision.position_fraction == Decimal("0.30")
+    assert decision.position_fraction == Decimal("0.35")
     assert decision.stop_atr == Decimal("1.0")
 
 
@@ -78,7 +78,7 @@ def test_exhaustion_breakout_then_retest(config):
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.RETEST_CONFIRM
-    assert decision.position_fraction == Decimal("0.40")
+    assert decision.position_fraction == Decimal("0.45")
 
 
 def test_no_breakout_no_pending_no_entry(config):
@@ -147,6 +147,6 @@ def test_scout_entry(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.30")
+    assert decision.position_fraction == Decimal("0.35")
     assert decision.stop_atr == Decimal("0.7")
     assert decision.score >= Decimal("8")

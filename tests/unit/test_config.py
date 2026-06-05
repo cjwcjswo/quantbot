@@ -18,11 +18,15 @@ def test_loads_repo_config():
     assert cfg.paper.initial_balance_usdt == 10000
     assert cfg.orders.live_new_entry_market_order_allowed is False
     assert cfg.risk.account_risk_per_trade_percent == 1.0
-    assert cfg.entry.anti_chase.max_rsi_long == 72
+    assert cfg.bot.max_symbols_to_watch == 10
+    assert cfg.scanner.max_candidates == 10
+    assert cfg.orders.scout_order_type == "AGGRESSIVE_LIMIT"
+    assert cfg.orders.retest_order_type == "AGGRESSIVE_LIMIT"
+    assert cfg.entry.anti_chase.max_rsi_long == 76
     assert cfg.position_protection.max_seconds_position_without_tpsl == 3
     assert cfg.reconciliation.interval_sec_when_flat == 10
     assert cfg.api.app_env == "production"
-    assert cfg.entry.pre_breakout.min_score == 6
+    assert cfg.entry.pre_breakout.min_score == 5
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 
 

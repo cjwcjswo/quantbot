@@ -7,6 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 
 from packages.core.enums import (
+    OrderStatus,
     OrderType,
     PositionSide,
     PositionSource,
@@ -33,6 +34,28 @@ async def test_log_order_populates_mode_source(session_factory):
     assert row.mode == "PAPER"
     assert row.source == "BOT"
     assert row.filled_qty == "0.01"
+
+
+async def test_log_order_updates_existing_order(session_factory):
+    tl = TradeLogger(session_factory)
+    order = Order(
+        symbol="BTCUSDT",
+        side=Side.BUY,
+        order_type=OrderType.LIMIT,
+        qty=Decimal("0.01"),
+        order_id="o1",
+        client_order_id="c1",
+        status=OrderStatus.NEW,
+    )
+    await tl.log_order(order, mode="LIVE", source="BOT")
+
+    order.status = OrderStatus.CANCELLED
+    await tl.log_order(order, mode="LIVE", source="BOT")
+
+    async with session_factory() as s:
+        rows = (await s.execute(select(OrderRow))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].status == "CANCELLED"
 
 
 async def test_log_fill_populates_mode_slippage(session_factory):

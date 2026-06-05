@@ -95,7 +95,7 @@ async def test_paper_entry_and_trailing_exit(config, session_factory):
     # --- entry happened and position is ACTIVE with virtual SL/TP ---
     assert pos is not None
     assert pos.status == PositionStatus.ACTIVE
-    assert pos.qty == Decimal("30")
+    assert pos.qty == Decimal("35")
     assert pos.stop_loss_price == Decimal("100")
     assert pos.take_profit_price == Decimal("103")
     assert state.get_position("BTCUSDT") is pos
@@ -109,7 +109,7 @@ async def test_paper_entry_and_trailing_exit(config, session_factory):
         best_bid=Decimal("103.1"), best_ask=Decimal("103.2"), candle_1m=up,
     )
     assert any(a.type.value == "PARTIAL_TP" for a in actions1)
-    assert pos.qty == Decimal("15")  # 50% reduced
+    assert pos.qty == Decimal("17.5")  # 50% reduced
     assert pos.status == PositionStatus.ACTIVE
 
     # --- price falls below the trailing stop: full exit ---

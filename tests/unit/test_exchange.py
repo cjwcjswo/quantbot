@@ -145,3 +145,30 @@ async def test_cancel_order_removes_open_order():
     await gw.cancel_order("BTCUSDT", "x1", None)
     assert await gw.get_open_orders("BTCUSDT") == []
     assert gw.cancelled == [("BTCUSDT", "x1", None)]
+
+
+async def test_bybit_cancel_order_treats_missing_order_as_done():
+    class Limiter:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    calls = 0
+
+    def cancel_order(**_params):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("order not exists or too late to cancel (ErrCode: 110001)")
+
+    gw = BybitExchangeGateway.__new__(BybitExchangeGateway)
+    gw._category = "linear"
+    gw._order_limiter = Limiter()
+    gw._backoff_base = 0
+    gw._backoff_max = 0
+    gw._http = SimpleNamespace(cancel_order=cancel_order)
+
+    await gw.cancel_order("BTCUSDT", "missing", None)
+
+    assert calls == 1

@@ -949,6 +949,10 @@ class BotRuntime:
                     order.symbol, order.order_id, order.client_order_id
                 )
                 order.status = OrderStatus.CANCELLED
+                await self._persist_cancelled_order(
+                    order_id=order.order_id,
+                    client_order_id=order.client_order_id,
+                )
             except Exception:
                 logger.exception("failed to cancel open order %s", order.order_id)
 
@@ -982,6 +986,39 @@ class BotRuntime:
             order_id=payload.get("order_id"),
             client_order_id=payload.get("client_order_id"),
         )
+        self._mark_runtime_order_cancelled(
+            order_id=payload.get("order_id"),
+            client_order_id=payload.get("client_order_id"),
+        )
+        await self._persist_cancelled_order(
+            order_id=payload.get("order_id"),
+            client_order_id=payload.get("client_order_id"),
+        )
+
+    def _mark_runtime_order_cancelled(
+        self, *, order_id: str | None, client_order_id: str | None
+    ) -> None:
+        for order in self.runtime_state.orders.values():
+            if (
+                (order_id and order.order_id == order_id)
+                or (client_order_id and order.client_order_id == client_order_id)
+            ):
+                order.status = OrderStatus.CANCELLED
+
+    async def _persist_cancelled_order(
+        self, *, order_id: str | None, client_order_id: str | None
+    ) -> None:
+        update = getattr(self._trade_logger, "update_order_status", None)
+        if update is None:
+            return
+        try:
+            await update(
+                order_id=order_id,
+                client_order_id=client_order_id,
+                status=OrderStatus.CANCELLED.value,
+            )
+        except Exception:
+            logger.exception("order cancel status persist failed")
 
     async def _close_position(self, payload: dict) -> None:
         if self._trading is None or self._collector is None:

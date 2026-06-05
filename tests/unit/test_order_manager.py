@@ -63,6 +63,7 @@ async def test_aggressive_partial_above_keep(config):
 
 
 async def test_aggressive_partial_below_keep_flattens(config):
+    config.orders.partial_fill_min_ratio_to_keep = 0.70
     om, gw = _om(config, fill_ratio="0.5")
     out = await om.place_entry(
         symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
@@ -76,6 +77,7 @@ async def test_aggressive_partial_below_keep_flattens(config):
 
 
 async def test_limit_no_fill_gives_up_no_market(config):
+    config.orders.scout_order_type = "LIMIT"
     om, gw = _om(config, fill_ratio="0")
     out = await om.place_entry(
         symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
@@ -90,6 +92,7 @@ async def test_limit_no_fill_gives_up_no_market(config):
 
 
 async def test_limit_no_fill_updates_runtime_order_to_cancelled(config):
+    config.orders.scout_order_type = "LIMIT"
     config.orders.limit_reorder_attempts = 0
     gw = FakeGateway()
     gw.fill_ratio = Decimal("0")
@@ -106,7 +109,25 @@ async def test_limit_no_fill_updates_runtime_order_to_cancelled(config):
     assert recorded[-1].client_order_id == gw.cancelled[-1][2]
 
 
+async def test_limit_no_fill_persists_cancelled_order(config, session_factory):
+    config.orders.scout_order_type = "LIMIT"
+    config.orders.limit_reorder_attempts = 0
+    om, _gw = _om(config, fill_ratio="0", trade_logger=TradeLogger(session_factory))
+
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT, best_bid=_BID, best_ask=_ASK,
+    )
+
+    assert out.status == "NO_FILL"
+    assert await _count(session_factory, OrderRow) == 1
+    async with session_factory() as s:
+        row = (await s.execute(select(OrderRow))).scalars().one()
+    assert row.status == OrderStatus.CANCELLED.value
+
+
 async def test_limit_full_fill(config):
+    config.orders.retest_order_type = "LIMIT"
     om, gw = _om(config, fill_ratio="1")
     out = await om.place_entry(
         symbol="BTCUSDT", side=Side.BUY, qty=Decimal("5"),
