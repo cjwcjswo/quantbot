@@ -105,6 +105,35 @@ async def test_set_and_read_tpsl():
     assert state.stop_loss == Decimal("90")
 
 
+async def test_bybit_place_order_attaches_stop_loss_params():
+    gw = BybitExchangeGateway.__new__(BybitExchangeGateway)
+    gw._category = "linear"
+    gw._http = SimpleNamespace(place_order=object())
+    captured = {}
+
+    async def fake_order_rest(_fn, **params):
+        captured.update(params)
+        return {"orderId": "bybit-1", "orderLinkId": params.get("orderLinkId")}
+
+    gw._order_rest = fake_order_rest
+
+    await gw.place_order(
+        OrderRequest(
+            symbol="BTCUSDT",
+            side=Side.BUY,
+            order_type=OrderType.LIMIT,
+            qty=Decimal("1"),
+            price=Decimal("100"),
+            client_order_id="qb-test",
+            stop_loss=Decimal("90"),
+        )
+    )
+
+    assert captured["stopLoss"] == "90"
+    assert captured["tpslMode"] == "Full"
+    assert captured["slTriggerBy"] == "LastPrice"
+
+
 async def test_bybit_tpsl_reads_active_position_row():
     gw = BybitExchangeGateway.__new__(BybitExchangeGateway)
     gw._category = "linear"

@@ -12,8 +12,9 @@ import logging
 from dataclasses import dataclass, field
 
 from packages.config.settings import ReconciliationSection
-from packages.core.enums import PositionSource, PositionStatus
+from packages.core.enums import PositionSide, PositionSource, PositionStatus, Side
 from packages.core.events import BotEvent, BotEventType
+from packages.core.models import ExchangeOrder
 from packages.exchange import ExchangeGateway
 from packages.messaging import EventBus
 from packages.reconciliation.manual_intervention_handler import (
@@ -30,6 +31,7 @@ class ReconcileResult:
     external_positions: list[str] = field(default_factory=list)
     qty_mismatches: list[str] = field(default_factory=list)
     external_closes: list[str] = field(default_factory=list)
+    exchange_closes: list[str] = field(default_factory=list)
     external_orders: list[str] = field(default_factory=list)
 
     @property
@@ -38,6 +40,7 @@ class ReconcileResult:
             self.external_positions
             or self.qty_mismatches
             or self.external_closes
+            or self.exchange_closes
             or self.external_orders
         )
 
@@ -72,6 +75,7 @@ class ReconciliationManager:
             "external_positions": result.external_positions,
             "qty_mismatches": result.qty_mismatches,
             "external_closes": result.external_closes,
+            "exchange_closes": result.exchange_closes,
             "external_orders": result.external_orders,
         }
         await self._events.publish(
@@ -112,8 +116,12 @@ class ReconciliationManager:
                 internal.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
                 and symbol not in exch_by_symbol
             ):
-                await self._handler.handle_external_close(internal)
-                result.external_closes.append(symbol)
+                if internal.source == PositionSource.BOT:
+                    await self._handler.handle_bot_exchange_close(internal)
+                    result.exchange_closes.append(symbol)
+                else:
+                    await self._handler.handle_external_close(internal)
+                    result.external_closes.append(symbol)
 
     async def _reconcile_orders(self, result: ReconcileResult) -> None:
         known = self._state.known_order_ids()
@@ -122,6 +130,7 @@ class ReconciliationManager:
                 order.order_id in known
                 or (order.client_order_id and order.client_order_id in known)
                 or self._is_bot_client_order(order.client_order_id)
+                or self._is_bot_protection_order(order)
             ):
                 continue
             await self._handler.handle_external_order(order)
@@ -132,6 +141,39 @@ class ReconciliationManager:
         return bool(
             client_order_id
             and client_order_id.startswith(_BOT_CLIENT_ORDER_PREFIXES)
+        )
+
+    def _is_bot_protection_order(self, order: ExchangeOrder) -> bool:
+        internal = self._state.get_position(order.symbol)
+        if (
+            internal is None
+            or internal.source != PositionSource.BOT
+            or internal.status not in (PositionStatus.ACTIVE, PositionStatus.PENDING)
+            or not self._is_exit_side(order.side, internal.side)
+            or (order.qty > 0 and internal.qty > 0 and order.qty > internal.qty)
+        ):
+            return False
+        return self._looks_like_exchange_trigger_order(order)
+
+    @staticmethod
+    def _is_exit_side(order_side: Side, position_side: PositionSide) -> bool:
+        return (
+            (position_side == PositionSide.LONG and order_side == Side.SELL)
+            or (position_side == PositionSide.SHORT and order_side == Side.BUY)
+        )
+
+    @staticmethod
+    def _looks_like_exchange_trigger_order(order: ExchangeOrder) -> bool:
+        if order.trigger_price is not None:
+            return True
+        markers = " ".join(
+            value.lower()
+            for value in (order.stop_order_type, order.order_filter)
+            if value
+        )
+        return any(
+            token in markers
+            for token in ("stop", "tpsl", "takeprofit", "take_profit", "trailing", "oco")
         )
 
     def next_interval_sec(self) -> int:

@@ -135,6 +135,7 @@ class FakeGateway:
 
         if fill_qty > 0:
             self._apply_fill(request, fill_qty, fill_price)
+            self._apply_attached_tpsl(request)
 
         status = (
             OrderStatus.FILLED
@@ -175,6 +176,7 @@ class FakeGateway:
                 size=Decimal("0"),
                 avg_price=Decimal("0"),
             )
+            self._tpsl.pop(request.symbol, None)
             return
 
         new_side = PositionSide.LONG if new_signed > 0 else PositionSide.SHORT
@@ -203,6 +205,21 @@ class FakeGateway:
             avg_price=avg,
             leverage=self.leverage.get(request.symbol, Decimal("1")),
         )
+
+    def _apply_attached_tpsl(self, request: OrderRequest) -> None:
+        if request.reduce_only or self.disable_tpsl:
+            return
+        if request.take_profit is None and request.stop_loss is None:
+            return
+        self._tpsl[request.symbol] = (request.take_profit, request.stop_loss)
+        pos = self.positions.get(request.symbol)
+        if pos and pos.side is not None:
+            self.positions[request.symbol] = pos.model_copy(
+                update={
+                    "take_profit": request.take_profit,
+                    "stop_loss": request.stop_loss,
+                }
+            )
 
     async def cancel_order(
         self, symbol: str, order_id: str | None, client_order_id: str | None

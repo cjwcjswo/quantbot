@@ -69,6 +69,7 @@ class Executor(Protocol):
     async def open(
         self, *, symbol: str, side: Side, qty: Decimal, leverage: Decimal,
         best_bid: Decimal, best_ask: Decimal, entry_mode,
+        stop_loss: Decimal | None = None, take_profit: Decimal | None = None,
     ) -> OpenResult: ...
 
     async def close(
@@ -84,7 +85,10 @@ class PaperExecutor:
     def __init__(self, paper_engine: PaperExecutionEngine) -> None:
         self._paper = paper_engine
 
-    async def open(self, *, symbol, side, qty, leverage, best_bid, best_ask, entry_mode):
+    async def open(
+        self, *, symbol, side, qty, leverage, best_bid, best_ask, entry_mode,
+        stop_loss=None, take_profit=None,
+    ):
         fill = self._paper.execute_market(symbol, side, qty, best_bid, best_ask)
         return OpenResult(ok=True, fill_price=fill.price, fill_qty=qty, fee=fill.fee)
 
@@ -100,11 +104,15 @@ class LiveExecutor:
         self._gw = gateway
         self._om = order_manager
 
-    async def open(self, *, symbol, side, qty, leverage, best_bid, best_ask, entry_mode):
+    async def open(
+        self, *, symbol, side, qty, leverage, best_bid, best_ask, entry_mode,
+        stop_loss=None, take_profit=None,
+    ):
         await self._gw.set_leverage(symbol, leverage)
         outcome = await self._om.place_entry(
             symbol=symbol, side=side, qty=qty, entry_mode=entry_mode,
             best_bid=best_bid, best_ask=best_ask,
+            stop_loss=stop_loss, take_profit=take_profit,
         )
         if not outcome.is_filled:
             return OpenResult(ok=False, fill_price=Decimal(0), fill_qty=Decimal(0),
@@ -520,9 +528,28 @@ class TradingService:
             return None
 
         side = Side.BUY if sig.direction == SignalDirection.LONG else Side.SELL
+        attach_sl = (
+            rd.stop_loss_price
+            if (
+                self.mode == BotMode.LIVE
+                and self.cfg.tpsl.use_exchange_tpsl
+                and self.cfg.tpsl.use_exchange_sl
+            )
+            else None
+        )
+        attach_tp = (
+            rd.take_profit_price
+            if (
+                self.mode == BotMode.LIVE
+                and self.cfg.tpsl.use_exchange_tpsl
+                and self.cfg.tpsl.use_exchange_tp
+            )
+            else None
+        )
         opened = await self._executor.open(
             symbol=symbol, side=side, qty=rd.qty, leverage=rd.leverage,
             best_bid=best_bid, best_ask=best_ask, entry_mode=decision.entry_mode,
+            stop_loss=attach_sl, take_profit=attach_tp,
         )
         if not opened.ok or opened.fill_qty <= 0:
             if decision.entry_mode == EntryMode.BREAKOUT_CONFIRM:

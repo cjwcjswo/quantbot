@@ -99,9 +99,11 @@ async def test_external_close_marks_closed(config, events):
     pos = _bot_position(qty="1")
     state.positions["BTCUSDT"] = pos
     # gw reports no position for BTCUSDT
-    await recon.reconcile_once()
+    result = await recon.reconcile_once()
     assert pos.status == PositionStatus.CLOSED
-    assert BotEventType.POSITION_CLOSED_EXTERNALLY in events.types()
+    assert "BTCUSDT" in result.exchange_closes
+    assert not state.new_entries_paused()
+    assert BotEventType.POSITION_CLOSED in events.types()
 
 
 async def test_external_position_closed_when_exchange_flat(config, events):
@@ -137,6 +139,48 @@ async def test_external_order_detected_not_cancelled(config, events):
     assert "ext-1" in state.external_orders
     assert gw.cancelled == []  # never auto-cancel (impl doc §4.3)
     assert state.new_entries_paused()
+
+
+async def test_bot_exchange_protection_order_not_flagged_external(config, events):
+    state, gw, recon = _make(config, events)
+    pos = Position(
+        symbol="1000PEPEUSDT",
+        side=PositionSide.SHORT,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("44200"),
+        avg_entry_price=Decimal("0.012"),
+    )
+    state.positions[pos.symbol] = pos
+    gw.set_position(
+        ExchangePosition(
+            symbol=pos.symbol,
+            side=PositionSide.SHORT,
+            size=pos.qty,
+            avg_price=pos.avg_entry_price,
+        )
+    )
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol=pos.symbol,
+            order_id="bybit-sl-1",
+            client_order_id=None,
+            side=Side.BUY,
+            order_type="Market",
+            price=None,
+            qty=pos.qty,
+            status=OrderStatus.NEW,
+            trigger_price=Decimal("0.0125"),
+            stop_order_type="StopLoss",
+            order_filter="tpslOrder",
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.external_orders == []
+    assert state.external_orders == {}
+    assert not state.new_entries_paused()
 
 
 async def test_known_order_not_flagged_external(config, events):

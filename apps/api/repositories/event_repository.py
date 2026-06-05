@@ -43,6 +43,10 @@ def apply_severity_filter(stmt, severity: str | None):
     )
 
 
+def _exclude_dashboard_noise(stmt):
+    return stmt.where(BotEventRow.type != "NO_ENTRY_REASON")
+
+
 async def list_events(
     session_factory: Any, *, event_type=None, severity=None, symbol=None,
     frm: datetime | None = None, to: datetime | None = None,
@@ -51,6 +55,8 @@ async def list_events(
     stmt = select(BotEventRow)
     if event_type is not None:
         stmt = stmt.where(BotEventRow.type == event_type)
+    else:
+        stmt = _exclude_dashboard_noise(stmt)
     if symbol is not None:
         stmt = stmt.where(BotEventRow.symbol == symbol)
     stmt = apply_severity_filter(stmt, severity)
@@ -69,7 +75,9 @@ async def list_events(
 async def latest(session_factory: Any) -> dict | None:
     async with session_factory() as s:
         row = (await s.execute(
-            select(BotEventRow).order_by(BotEventRow.id.desc()).limit(1)
+            _exclude_dashboard_noise(
+                select(BotEventRow)
+            ).order_by(BotEventRow.id.desc()).limit(1)
         )).scalar_one_or_none()
     if row is None:
         return None

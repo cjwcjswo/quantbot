@@ -36,6 +36,7 @@ _EVENT_MAP = {
     "RISK_LIMIT_EXCEEDED_BY_MANUAL_INTERVENTION": "manual_intervention_event",
     "KILL_SWITCH_TRIPPED": "risk_update",
 }
+_SUPPRESSED_EVENTS = {"NO_ENTRY_REASON"}
 
 
 def _now_iso() -> str:
@@ -85,6 +86,8 @@ class DashboardStream:
         try:
             event = json.loads(raw)
         except (ValueError, TypeError):
+            return
+        if str(event.get("type", "")) in _SUPPRESSED_EVENTS:
             return
         ws_type = classify_event(str(event.get("type", "")))
         await self._manager.broadcast(self._wrap(ws_type, event))

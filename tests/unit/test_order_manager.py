@@ -53,6 +53,18 @@ async def test_aggressive_limit_records_actual_entry_mode(config):
     assert recorded[0].entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
 
 
+async def test_entry_order_can_attach_stop_loss(config):
+    om, gw = _om(config, fill_ratio="1")
+    out = await om.place_entry(
+        symbol="BTCUSDT", side=Side.BUY, qty=Decimal("10"),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM, best_bid=_BID, best_ask=_ASK,
+        stop_loss=Decimal("98.5"),
+    )
+    assert out.status == "FILLED"
+    assert gw.placed_orders[0].stop_loss == Decimal("98.5")
+    assert gw.placed_orders[0].take_profit is None
+
+
 async def test_aggressive_partial_above_keep(config):
     om, gw = _om(config, fill_ratio="0.8")
     out = await om.place_entry(

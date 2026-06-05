@@ -5,7 +5,8 @@ protection is set and verified. The current strategy requires exchange SL and
 leaves exchange TP disabled so bot-managed partial TP/trailing can run.
 
 ```
-set Trading Stop
+verify entry-attached protection
+-> missing/mismatched: set Trading Stop fallback
 -> re-read configured protection (retry up to N times at interval)
 -> protected => position ACTIVE
 -> not protected => reduce-only MARKET emergency close
@@ -86,6 +87,13 @@ class PositionProtectionManager:
         tp = position.take_profit_price if tpsl.use_exchange_tp else None
         sl = position.stop_loss_price if tpsl.use_exchange_sl else None
 
+        if tp is None and sl is None:
+            position.status = PositionStatus.ACTIVE
+            return ProtectionResult(protected=True, tp=tp, sl=sl)
+
+        if pp.verify_tpsl_after_entry and await self._verify(position):
+            return await self._activate(position, tp=tp, sl=sl)
+
         await self._gw.set_trading_stop(
             TradingStopRequest(
                 symbol=position.symbol,
@@ -103,18 +111,26 @@ class PositionProtectionManager:
         if self._logger is not None:
             await self._logger.log_protection(position.symbol, "TPSL_SET", tp=tp, sl=sl)
 
-        if pp.verify_tpsl_after_entry and await self._verify(position):
+        if not pp.verify_tpsl_after_entry:
             position.status = PositionStatus.ACTIVE
-            await self._events.publish(
-                BotEvent(type=BotEventType.TPSL_VERIFIED, symbol=position.symbol)
-            )
-            if self._logger is not None:
-                await self._logger.log_protection(
-                    position.symbol, "TPSL_VERIFIED", tp=tp, sl=sl
-                )
             return ProtectionResult(protected=True, tp=tp, sl=sl)
+        if await self._verify(position):
+            return await self._activate(position, tp=tp, sl=sl)
 
         return await self._emergency_close(position)
+
+    async def _activate(
+        self, position: Position, *, tp: Decimal | None, sl: Decimal | None
+    ) -> ProtectionResult:
+        position.status = PositionStatus.ACTIVE
+        await self._events.publish(
+            BotEvent(type=BotEventType.TPSL_VERIFIED, symbol=position.symbol)
+        )
+        if self._logger is not None:
+            await self._logger.log_protection(
+                position.symbol, "TPSL_VERIFIED", tp=tp, sl=sl
+            )
+        return ProtectionResult(protected=True, tp=tp, sl=sl)
 
     async def _verify(self, position: Position) -> bool:
         pp = self.cfg.position_protection

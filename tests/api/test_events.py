@@ -18,6 +18,22 @@ async def test_list_and_severity(client, session_factory):
     assert sev["POSITION_OPENED"] == "INFO"
 
 
+async def test_no_entry_reason_hidden_by_default_but_queryable(client, session_factory):
+    await add_rows(
+        session_factory,
+        BotEventRow(type="POSITION_OPENED", symbol="BTCUSDT", message="open"),
+        BotEventRow(type="NO_ENTRY_REASON", symbol="ETHUSDT", message="SCOUT_SCORE_TOO_LOW"),
+    )
+
+    data = (await client.get("/events")).json()["data"]
+    assert [e["type"] for e in data["events"]] == ["POSITION_OPENED"]
+
+    explicit = (await client.get(
+        "/events", params={"event_type": "NO_ENTRY_REASON"}
+    )).json()["data"]
+    assert [e["type"] for e in explicit["events"]] == ["NO_ENTRY_REASON"]
+
+
 async def test_filter_by_type_and_symbol(client, session_factory):
     await add_rows(
         session_factory,

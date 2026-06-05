@@ -433,6 +433,9 @@ class BybitExchangeGateway:
                         item.get("orderStatus", ""), OrderStatus.UNKNOWN
                     ),
                     reduce_only=bool(item.get("reduceOnly", False)),
+                    trigger_price=_opt_dec(item.get("triggerPrice")),
+                    stop_order_type=item.get("stopOrderType") or None,
+                    order_filter=item.get("orderFilter") or None,
                     created_ms=int(item.get("createdTime", 0)),
                 )
             )
@@ -508,6 +511,9 @@ class BybitExchangeGateway:
                 item.get("orderStatus", ""), OrderStatus.UNKNOWN
             ),
             reduce_only=bool(item.get("reduceOnly", False)),
+            trigger_price=_opt_dec(item.get("triggerPrice")),
+            stop_order_type=item.get("stopOrderType") or None,
+            order_filter=item.get("orderFilter") or None,
             created_ms=int(item.get("createdTime", 0)),
         )
 
@@ -530,6 +536,17 @@ class BybitExchangeGateway:
             params["timeInForce"] = tif.value
         if request.client_order_id:
             params["orderLinkId"] = request.client_order_id
+        if not request.reduce_only:
+            if request.take_profit is not None:
+                params["takeProfit"] = str(request.take_profit)
+            if request.stop_loss is not None:
+                params["stopLoss"] = str(request.stop_loss)
+            if request.take_profit is not None or request.stop_loss is not None:
+                params["tpslMode"] = request.tpsl_mode
+            if request.take_profit is not None:
+                params["tpTriggerBy"] = request.tp_trigger_by.value
+            if request.stop_loss is not None:
+                params["slTriggerBy"] = request.sl_trigger_by.value
 
         result = await self._order_rest(self._http.place_order, **params)
         order_id = result.get("orderId", "")

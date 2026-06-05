@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from packages.config.settings import ManualInterventionSection
-from packages.core.enums import PositionSource, PositionStatus
+from packages.core.enums import ExitReason, PositionSource, PositionStatus
 from packages.core.events import BotEvent, BotEventType
 from packages.core.models import ExchangeOrder, ExchangePosition, Position
 from packages.messaging import EventBus
@@ -181,6 +182,7 @@ class ManualInterventionHandler:
         """Internal position exists but Bybit shows flat (closed externally)."""
         internal.status = PositionStatus.CLOSED
         internal.qty = Decimal("0")
+        internal.closed_at = datetime.now(timezone.utc)
         self._pause()
         await self._events.publish(
             BotEvent(
@@ -190,3 +192,25 @@ class ManualInterventionHandler:
             )
         )
         await self._log(internal.symbol, "external_close", {})
+
+    async def handle_bot_exchange_close(self, internal: Position) -> None:
+        """Bot-managed position is already flat on Bybit, usually by exchange SL."""
+        prev_qty = internal.qty
+        internal.status = PositionStatus.CLOSED
+        internal.qty = Decimal("0")
+        internal.closed_at = datetime.now(timezone.utc)
+        internal.exit_reason = ExitReason.TRAILING_STOP
+        await self._events.publish(
+            BotEvent(
+                type=BotEventType.POSITION_CLOSED,
+                symbol=internal.symbol,
+                message="Bot position is flat on exchange; marked closed",
+                data={
+                    "prev_qty": str(prev_qty),
+                    "reason": internal.exit_reason.value,
+                    "source": "exchange_protection",
+                },
+            )
+        )
+        if self._logger is not None:
+            await self._logger.log_position(internal, mode="LIVE")

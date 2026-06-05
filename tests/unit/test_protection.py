@@ -46,6 +46,21 @@ async def test_protect_success_makes_active(config, events):
     assert BotEventType.TPSL_VERIFIED in events.types()
 
 
+async def test_protect_uses_entry_attached_tpsl_when_verified(config, events):
+    gw = FakeGateway()
+    pos = _position()
+    gw._tpsl[pos.symbol] = (None, pos.stop_loss_price)
+    ppm = _ppm(config, gw, events)
+
+    result = await ppm.protect(pos)
+
+    assert result.protected
+    assert pos.status == PositionStatus.ACTIVE
+    assert gw.trading_stops == []
+    assert BotEventType.TPSL_SET not in events.types()
+    assert BotEventType.TPSL_VERIFIED in events.types()
+
+
 async def test_protect_verify_fail_emergency_close_order_locked(config, events):
     gw = FakeGateway()
     gw.disable_tpsl = True  # TP/SL never registers => verify fails

@@ -19,7 +19,14 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from packages.config.settings import AppConfig
-from packages.core.enums import EntryMode, OrderStatus, OrderType, Side, TimeInForce
+from packages.core.enums import (
+    EntryMode,
+    OrderStatus,
+    OrderType,
+    Side,
+    TimeInForce,
+    TriggerBy,
+)
 from packages.core.errors import OrderTimeoutError
 from packages.core.models import (
     ExchangeOrder,
@@ -106,15 +113,21 @@ class OrderManager:
         best_bid: Decimal,
         best_ask: Decimal,
         limit_price: Decimal | None = None,
+        stop_loss: Decimal | None = None,
+        take_profit: Decimal | None = None,
     ) -> OrderOutcome:
         order_type = entry_order_type(entry_mode, self.cfg.orders)
         assert_live_new_entry_allowed(order_type, reduce_only=False, config=self.cfg.orders)
         if order_type == OrderType.AGGRESSIVE_LIMIT:
             return await self._place_aggressive(
-                symbol, side, qty, best_bid, best_ask, entry_mode
+                symbol, side, qty, best_bid, best_ask, entry_mode,
+                stop_loss=stop_loss, take_profit=take_profit,
             )
         price = limit_price or self._passive_limit_price(side, best_bid, best_ask)
-        return await self._place_limit(symbol, side, qty, price, entry_mode)
+        return await self._place_limit(
+            symbol, side, qty, price, entry_mode,
+            stop_loss=stop_loss, take_profit=take_profit,
+        )
 
     async def _place_aggressive(
         self,
@@ -124,6 +137,9 @@ class OrderManager:
         best_bid: Decimal,
         best_ask: Decimal,
         entry_mode: EntryMode,
+        *,
+        stop_loss: Decimal | None = None,
+        take_profit: Decimal | None = None,
     ) -> OrderOutcome:
         price = aggressive_limit_price(
             side, best_ask, best_bid, Decimal(str(self.cfg.orders.max_slippage_percent))
@@ -133,6 +149,7 @@ class OrderManager:
             OrderRequest(
                 symbol=symbol, side=side, order_type=OrderType.AGGRESSIVE_LIMIT,
                 qty=qty, price=price, time_in_force=TimeInForce.IOC, client_order_id=cid,
+                **self._entry_tpsl_fields(stop_loss=stop_loss, take_profit=take_profit),
             ),
             entry_mode=entry_mode,
         )
@@ -156,7 +173,15 @@ class OrderManager:
         )
 
     async def _place_limit(
-        self, symbol: str, side: Side, qty: Decimal, price: Decimal, entry_mode
+        self,
+        symbol: str,
+        side: Side,
+        qty: Decimal,
+        price: Decimal,
+        entry_mode,
+        *,
+        stop_loss: Decimal | None = None,
+        take_profit: Decimal | None = None,
     ) -> OrderOutcome:
         tries = self.cfg.orders.limit_reorder_attempts + 1
         for _ in range(tries):
@@ -165,6 +190,7 @@ class OrderManager:
                 symbol=symbol, side=side, order_type=OrderType.LIMIT,
                 qty=qty, price=price, time_in_force=TimeInForce.GTC,
                 client_order_id=cid,
+                **self._entry_tpsl_fields(stop_loss=stop_loss, take_profit=take_profit),
             )
             res = await self._place(
                 request,
@@ -429,6 +455,19 @@ class OrderManager:
         if entry_mode == EntryMode.RETEST_CONFIRM:
             return self.cfg.orders.retest_limit_order_ttl_sec
         return self.cfg.orders.limit_order_ttl_sec
+
+    def _entry_tpsl_fields(
+        self, *, stop_loss: Decimal | None, take_profit: Decimal | None
+    ) -> dict:
+        if stop_loss is None and take_profit is None:
+            return {}
+        return {
+            "take_profit": take_profit,
+            "stop_loss": stop_loss,
+            "tp_trigger_by": TriggerBy(self.cfg.tpsl.tp_trigger_by),
+            "sl_trigger_by": TriggerBy(self.cfg.tpsl.sl_trigger_by),
+            "tpsl_mode": self.cfg.tpsl.tpsl_mode,
+        }
 
     async def _normalize_request_qty(self, request: OrderRequest) -> OrderRequest:
         meta = await self._meta_for(request.symbol)

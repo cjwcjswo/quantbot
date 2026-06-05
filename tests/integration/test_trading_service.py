@@ -242,6 +242,8 @@ async def test_live_entry_protected_then_active(config, events):
     assert pos.status == PositionStatus.ACTIVE
     assert service._state.get_position("BTCUSDT") is pos
     assert gw.leverage.get("BTCUSDT") is not None  # leverage was set before entry
+    assert gw.placed_orders[0].stop_loss == pos.stop_loss_price
+    assert gw.trading_stops == []
     from packages.core.events import BotEventType
     assert BotEventType.TPSL_VERIFIED in events.types()
 

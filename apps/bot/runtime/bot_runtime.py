@@ -1103,6 +1103,7 @@ class BotRuntime:
             "external_positions": result.external_positions,
             "qty_mismatches": result.qty_mismatches,
             "external_closes": result.external_closes,
+            "exchange_closes": result.exchange_closes,
             "external_orders": result.external_orders,
             "changed": result.changed,
             "ts_ms": int(time.time() * 1000),

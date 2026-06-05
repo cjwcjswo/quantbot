@@ -57,6 +57,13 @@ async def test_dispatch_event_classifies(redis):
     assert mgr.messages[0]["type"] == "position_update"
 
 
+async def test_dispatch_event_suppresses_no_entry_reason(redis):
+    mgr = RecordingManager()
+    stream = DashboardStream(redis, mgr, ApiSettings())
+    await stream.dispatch_event(json.dumps({"type": "NO_ENTRY_REASON", "symbol": "BTC"}))
+    assert mgr.messages == []
+
+
 async def test_pnl_throttle(redis):
     mgr = RecordingManager()
     stream = DashboardStream(redis, mgr, ApiSettings())

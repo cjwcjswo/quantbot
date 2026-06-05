@@ -53,6 +53,9 @@ class ExchangeOrder(_Model):
     avg_price: Decimal | None = None
     status: OrderStatus = OrderStatus.UNKNOWN
     reduce_only: bool = False
+    trigger_price: Decimal | None = None
+    stop_order_type: str | None = None
+    order_filter: str | None = None
     created_ms: int = 0
 
 
@@ -72,6 +75,11 @@ class OrderRequest(_MutModel):
     time_in_force: TimeInForce | None = None
     reduce_only: bool = False
     client_order_id: str | None = None
+    take_profit: Decimal | None = None
+    stop_loss: Decimal | None = None
+    tp_trigger_by: TriggerBy = TriggerBy.LAST_PRICE
+    sl_trigger_by: TriggerBy = TriggerBy.LAST_PRICE
+    tpsl_mode: str = "Full"
 
 
 class ExchangeOrderResult(_Model):
