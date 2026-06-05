@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from packages.core.events import BotEvent, event_severity
+from packages.core.events import BotEvent, event_severity, should_persist_event
 from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
     BotEventRow,
@@ -58,13 +58,16 @@ class TradeLogger:
 
     # EventBus sink
     async def __call__(self, event: BotEvent) -> None:
+        severity = event_severity(event.type)
+        if not should_persist_event(event.type, severity):
+            return
         await self._add(
             BotEventRow(
                 type=event.type.value,
                 symbol=event.symbol,
                 message=event.message,
                 data=event.data,
-                severity=event_severity(event.type),
+                severity=severity,
             )
         )
 

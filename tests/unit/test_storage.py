@@ -39,6 +39,23 @@ async def test_event_sink_persists(session_factory):
     assert row.severity == "ERROR"
 
 
+async def test_event_sink_persists_important_info(session_factory):
+    tl = TradeLogger(session_factory)
+    await tl(BotEvent(type=BotEventType.POSITION_OPENED, symbol="BTCUSDT", message="x"))
+    assert await _count(session_factory, BotEventRow) == 1
+    async with session_factory() as s:
+        row = (await s.execute(select(BotEventRow))).scalar_one()
+    assert row.severity == "INFO"
+
+
+async def test_event_sink_skips_noisy_info(session_factory):
+    tl = TradeLogger(session_factory)
+    await tl(BotEvent(type=BotEventType.SIGNAL, symbol="BTCUSDT", message="noise"))
+    await tl(BotEvent(type=BotEventType.DATA_QUALITY_BLOCK, symbol="ETHUSDT", message="noise"))
+    await tl(BotEvent(type=BotEventType.RECONCILED, message="noise"))
+    assert await _count(session_factory, BotEventRow) == 0
+
+
 async def test_log_signal(session_factory):
     tl = TradeLogger(session_factory)
     await tl.log_signal(

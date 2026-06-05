@@ -64,16 +64,25 @@ _ERROR_EVENTS = {
     "ORDER_LOCKED",
 }
 _WARNING_EVENTS = {
-    "DATA_QUALITY_BLOCK",
     "NEW_ENTRIES_PAUSED",
     "EXTERNAL_POSITION_DETECTED",
     "EXTERNAL_ORDER_DETECTED",
     "POSITION_QUANTITY_MISMATCH",
+    "MANUAL_PARTIAL_CLOSE_DETECTED",
+    "MANUAL_ADD_DETECTED",
+    "POSITION_CLOSED_EXTERNALLY",
+    "RISK_LIMIT_EXCEEDED_BY_MANUAL_INTERVENTION",
 }
 _SEVERITY_TO_EVENTS = {
     "CRITICAL": _CRITICAL_EVENTS,
     "ERROR": _ERROR_EVENTS,
     "WARNING": _WARNING_EVENTS,
+}
+_IMPORTANT_INFO_EVENTS = {
+    "ORDER_PLACED",
+    "ORDER_FILLED",
+    "POSITION_OPENED",
+    "POSITION_CLOSED",
 }
 
 
@@ -96,6 +105,18 @@ def non_info_event_types() -> set[str]:
     for event_types in _SEVERITY_TO_EVENTS.values():
         out.update(event_types)
     return out
+
+
+def should_persist_event(
+    event_type: str | BotEventType, stored_severity: str | None = None
+) -> bool:
+    value = event_type.value if isinstance(event_type, BotEventType) else event_type
+    severity = event_severity(value, stored_severity)
+    if severity == "INFO":
+        return value in _IMPORTANT_INFO_EVENTS
+    if severity == "WARNING":
+        return value in _WARNING_EVENTS
+    return severity in {"ERROR", "CRITICAL"}
 
 
 class BotEvent(BaseModel):

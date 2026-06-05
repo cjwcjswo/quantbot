@@ -18,6 +18,13 @@ function SourceCell({ p }: { p: Position }) {
   );
 }
 
+function leverageText(value: string | null): string {
+  if (!value) return "-";
+  const n = Number(value);
+  if (Number.isNaN(n)) return value.endsWith("x") ? value : `${value}x`;
+  return `${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}x`;
+}
+
 export function PositionsTable({
   positions,
   onClose,
@@ -68,7 +75,7 @@ export function PositionsTable({
         </span>
       ),
     },
-    { key: "lev", header: "레버리지", align: "right", render: (p) => p.leverage ?? "-" },
+    { key: "lev", header: "레버리지", align: "right", render: (p) => leverageText(p.leverage) },
     { key: "entryMode", header: "진입 모드", render: (p) => p.entry_mode ?? "-" },
     { key: "strategy", header: "전략", render: (p) => p.strategy_id ?? "-" },
     {
