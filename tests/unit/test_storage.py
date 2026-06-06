@@ -104,6 +104,33 @@ async def test_log_fill_and_position(session_factory):
     assert prow.entry_mode == "BREAKOUT_CONFIRM"
 
 
+async def test_log_closed_position_closes_previous_open_snapshots(session_factory):
+    tl = TradeLogger(session_factory)
+    pos = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        qty=Decimal("1"),
+        avg_entry_price=Decimal("100"),
+    )
+    await tl.log_position(pos, mode="LIVE")
+    pos.qty = Decimal("0.5")
+    await tl.log_position(pos, mode="LIVE")
+
+    pos.status = PositionStatus.CLOSED
+    pos.qty = Decimal("0")
+    await tl.log_position(pos, mode="LIVE")
+
+    async with session_factory() as s:
+        rows = (await s.execute(
+            select(PositionRow).where(PositionRow.symbol == "BTCUSDT")
+        )).scalars().all()
+
+    assert len(rows) == 3
+    assert {row.status for row in rows} == {"CLOSED"}
+    assert {row.qty for row in rows} == {"0"}
+
+
 async def test_log_trade_truncates_long_r_multiple(session_factory):
     tl = TradeLogger(session_factory)
     await tl.log_trade(

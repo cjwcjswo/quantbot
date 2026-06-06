@@ -33,6 +33,7 @@ class ReconcileResult:
     external_closes: list[str] = field(default_factory=list)
     exchange_closes: list[str] = field(default_factory=list)
     external_orders: list[str] = field(default_factory=list)
+    stale_bot_orders_cancelled: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -42,6 +43,7 @@ class ReconcileResult:
             or self.external_closes
             or self.exchange_closes
             or self.external_orders
+            or self.stale_bot_orders_cancelled
         )
 
 
@@ -77,6 +79,7 @@ class ReconciliationManager:
             "external_closes": result.external_closes,
             "exchange_closes": result.exchange_closes,
             "external_orders": result.external_orders,
+            "stale_bot_orders_cancelled": result.stale_bot_orders_cancelled,
         }
         await self._events.publish(
             BotEvent(type=BotEventType.RECONCILED,
@@ -130,6 +133,9 @@ class ReconciliationManager:
     async def _reconcile_orders(self, result: ReconcileResult) -> None:
         known = self._state.known_order_ids()
         for order in await self._gw.get_open_orders():
+            if self._is_stale_bot_reduce_order(order):
+                await self._cancel_stale_bot_order(order, result)
+                continue
             if (
                 order.order_id in known
                 or (order.client_order_id and order.client_order_id in known)
@@ -139,6 +145,32 @@ class ReconciliationManager:
                 continue
             await self._handler.handle_external_order(order)
             result.external_orders.append(order.order_id)
+
+    def _is_stale_bot_reduce_order(self, order: ExchangeOrder) -> bool:
+        if not order.reduce_only or not self._is_bot_client_order(order.client_order_id):
+            return False
+        internal = self._state.get_position(order.symbol)
+        return internal is None or internal.status == PositionStatus.CLOSED
+
+    async def _cancel_stale_bot_order(
+        self, order: ExchangeOrder, result: ReconcileResult
+    ) -> None:
+        await self._gw.cancel_order(
+            order.symbol,
+            order.order_id,
+            order.client_order_id,
+        )
+        result.stale_bot_orders_cancelled.append(order.order_id)
+        update = getattr(self._logger, "update_order_status", None)
+        if update is not None:
+            try:
+                await update(
+                    order_id=order.order_id,
+                    client_order_id=order.client_order_id,
+                    status="CANCELLED",
+                )
+            except Exception:
+                logger.exception("stale bot order cancel status persist failed")
 
     @staticmethod
     def _is_bot_client_order(client_order_id: str | None) -> bool:

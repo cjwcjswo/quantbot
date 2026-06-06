@@ -52,6 +52,26 @@ async def test_list_fallback_to_postgres(client, redis, session_factory):
     assert data["positions"][0]["symbol"] == "BTCUSDT"
 
 
+async def test_list_fallback_uses_latest_position_snapshot(client, redis, session_factory):
+    await add_rows(
+        session_factory,
+        PositionRow(
+            symbol="BTCUSDT", side="LONG", status="ACTIVE", source="BOT",
+            qty="0.01", avg_entry_price="65000", mode="LIVE", leverage="3",
+        ),
+        PositionRow(
+            symbol="BTCUSDT", side="LONG", status="CLOSED", source="BOT",
+            qty="0", avg_entry_price="65000", mode="LIVE", leverage="3",
+            exit_reason="TRAILING_STOP",
+        ),
+    )
+
+    data = (await client.get("/positions")).json()["data"]
+
+    assert data["source"] == "postgres"
+    assert data["positions"] == []
+
+
 async def test_list_malformed_snapshot_degrades(client, redis, session_factory):
     await redis.set("bot:positions", "{not json")
     data = (await client.get("/positions")).json()["data"]

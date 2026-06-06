@@ -311,6 +311,31 @@ async def test_bot_prefix_order_not_flagged_external_after_restart(config, event
     assert not state.new_entries_paused()
 
 
+async def test_stale_bot_reduce_order_cancelled_after_position_flat(config, events):
+    state, gw, recon = _make(config, events)
+    gw.open_orders.append(
+        ExchangeOrder(
+            symbol="BTCUSDT",
+            order_id="bybit-ptp",
+            client_order_id="ptp-stale",
+            side=Side.SELL,
+            order_type="Limit",
+            price=Decimal("110"),
+            qty=Decimal("1"),
+            status=OrderStatus.NEW,
+            reduce_only=True,
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert result.stale_bot_orders_cancelled == ["bybit-ptp"]
+    assert gw.cancelled == [("BTCUSDT", "bybit-ptp", "ptp-stale")]
+    assert result.external_orders == []
+    assert state.external_orders == {}
+    assert not state.new_entries_paused()
+
+
 async def test_in_sync_no_events(config, events):
     state, gw, recon = _make(config, events)
     pos = _bot_position(qty="1", avg="100")

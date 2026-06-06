@@ -11,9 +11,10 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from packages.core.enums import PositionStatus
 from packages.core.events import BotEvent, event_severity, should_persist_event
 from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
@@ -204,34 +205,58 @@ class TradeLogger:
         mark_price: str | None = None,
         protection_status: str | None = None,
     ) -> None:
-        await self._add(
-            PositionRow(
-                symbol=position.symbol,
-                side=position.side.value,
-                status=position.status.value,
-                source=position.source.value,
-                qty=str(position.qty),
-                avg_entry_price=str(position.avg_entry_price),
-                manual_added_qty=str(position.manual_added_qty),
-                stop_loss_price=str(position.stop_loss_price)
-                if position.stop_loss_price is not None
-                else None,
-                take_profit_price=str(position.take_profit_price)
-                if position.take_profit_price is not None
-                else None,
-                entry_mode=position.entry_mode.value if position.entry_mode else None,
-                realized_pnl=str(position.realized_pnl),
-                exit_reason=position.exit_reason.value if position.exit_reason else None,
-                closed_at=position.closed_at,
-                mode=mode,
-                leverage=str(position.leverage),
-                mark_price=mark_price,
-                unrealized_pnl=str(position.unrealized_pnl),
-                strategy_id=_max_text(strategy_id or (position.strategy_id or None), 64),
-                protection_status=protection_status,
-                opened_at=position.opened_at,
-            )
+        row = PositionRow(
+            symbol=position.symbol,
+            side=position.side.value,
+            status=position.status.value,
+            source=position.source.value,
+            qty=str(position.qty),
+            avg_entry_price=str(position.avg_entry_price),
+            manual_added_qty=str(position.manual_added_qty),
+            stop_loss_price=str(position.stop_loss_price)
+            if position.stop_loss_price is not None
+            else None,
+            take_profit_price=str(position.take_profit_price)
+            if position.take_profit_price is not None
+            else None,
+            entry_mode=position.entry_mode.value if position.entry_mode else None,
+            realized_pnl=str(position.realized_pnl),
+            exit_reason=position.exit_reason.value if position.exit_reason else None,
+            closed_at=position.closed_at,
+            mode=mode,
+            leverage=str(position.leverage),
+            mark_price=mark_price,
+            unrealized_pnl=str(position.unrealized_pnl),
+            strategy_id=_max_text(strategy_id or (position.strategy_id or None), 64),
+            protection_status=protection_status,
+            opened_at=position.opened_at,
         )
+        async with self._sf() as session:
+            if position.status == PositionStatus.CLOSED:
+                filters = [
+                    PositionRow.symbol == position.symbol,
+                    PositionRow.source == position.source.value,
+                    PositionRow.status.in_(("PENDING", "ACTIVE", "CLOSING")),
+                ]
+                if mode is not None:
+                    filters.append(PositionRow.mode == mode)
+                if position.opened_at is not None:
+                    filters.append(PositionRow.opened_at == position.opened_at)
+                await session.execute(
+                    update(PositionRow)
+                    .where(*filters)
+                    .values(
+                        status=PositionStatus.CLOSED.value,
+                        qty="0",
+                        realized_pnl=str(position.realized_pnl),
+                        exit_reason=position.exit_reason.value
+                        if position.exit_reason
+                        else None,
+                        closed_at=position.closed_at,
+                    )
+                )
+            session.add(row)
+            await session.commit()
 
     async def log_trade(
         self,
