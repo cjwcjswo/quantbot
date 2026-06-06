@@ -52,6 +52,18 @@ def _position_json(
         "take_profit": str(p.take_profit_price) if p.take_profit_price is not None else None,
         "unrealized_pnl": str(p.unrealized_pnl),
         "entry_mode": p.entry_mode.value if p.entry_mode else None,
+        "runner_mode_active": p.runner_mode_active,
+        "runner_trend_strength": p.runner_trend_strength,
+        "runner_trailing_atr_multiplier": (
+            str(p.runner_trailing_atr_multiplier)
+            if p.runner_trailing_atr_multiplier is not None
+            else None
+        ),
+        "last_runner_trailing_stop": (
+            str(p.last_runner_trailing_stop)
+            if p.last_runner_trailing_stop is not None
+            else None
+        ),
     }
 
 

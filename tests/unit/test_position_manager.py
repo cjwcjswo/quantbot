@@ -368,3 +368,175 @@ def test_short_partial_take_profit(config):
     actions = pm.evaluate(pos, price=Decimal("98"), atr=Decimal("1"),
                           candle_1m=candle(h="100", l="98", c="98"))
     assert PositionActionType.PARTIAL_TP in _types(actions)
+
+
+def test_runner_mode_activates_after_partial_tp(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.partial_tp_done = True
+    pos.qty = Decimal("5")
+    actions = pm.activate_runner_after_partial_tp(
+        pos,
+        price=Decimal("102"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="103", l="101", c="102"),
+        snapshot_1m=snap(timeframe="1", close="102", ema20="101", rsi="55"),
+        snapshot_5m=snap(timeframe="5", close="102", ema20="101"),
+    )
+
+    assert pos.runner_mode_active
+    assert pos.runner_trend_strength == "STRONG"
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.8")
+    assert pos.stop_loss_price == Decimal("100.2")
+    assert [a.event_type for a in actions if a.event_type] == [
+        "RUNNER_MODE_ACTIVATED",
+        "RUNNER_TRAILING_UPDATED",
+    ]
+
+
+def test_short_runner_strong_trend_uses_2_8_atr(config):
+    pm = PositionManager(config)
+    pos = _pos(side=PositionSide.SHORT, entry="100", risk="1")
+    pos.stop_loss_price = Decimal("101")
+    pos.partial_tp_done = True
+    pos.qty = Decimal("5")
+
+    pm.activate_runner_after_partial_tp(
+        pos,
+        price=Decimal("98"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="99", l="97.5", c="98"),
+        snapshot_1m=snap(timeframe="1", close="98", ema20="99", rsi="40"),
+        snapshot_5m=snap(timeframe="5", close="98", ema20="99"),
+    )
+
+    assert pos.runner_trend_strength == "STRONG"
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.8")
+    assert pos.stop_loss_price == Decimal("100.3")
+
+
+def test_runner_very_strong_uses_3_2_atr(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.partial_tp_done = True
+    pos.qty = Decimal("5")
+
+    pm.activate_runner_after_partial_tp(
+        pos,
+        price=Decimal("105"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="106", l="104", c="105"),
+        snapshot_1m=snap(timeframe="1", close="105", ema20="103", rsi="56"),
+        snapshot_5m=snap(timeframe="5", close="105", ema20="103"),
+    )
+
+    assert pos.runner_trend_strength == "VERY_STRONG"
+    assert pos.runner_trailing_atr_multiplier == Decimal("3.2")
+    assert pos.stop_loss_price == Decimal("102.8")
+
+
+def test_runner_weak_trend_uses_2_0_atr(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.partial_tp_done = True
+    pos.qty = Decimal("5")
+
+    pm.activate_runner_after_partial_tp(
+        pos,
+        price=Decimal("102"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="103", l="101", c="102"),
+        snapshot_1m=snap(timeframe="1", close="102", ema20="102.5", rsi="49"),
+        snapshot_5m=snap(timeframe="5", close="102", ema20="101"),
+    )
+
+    assert pos.runner_trend_strength == "WEAK"
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
+    assert pos.stop_loss_price == Decimal("101")
+
+
+def test_runner_long_stop_never_moves_against_position(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("2.8")
+    pos.highest_price = Decimal("103")
+    pos.stop_loss_price = Decimal("101")
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("102"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="102.5", l="101.5", c="102"),
+        snapshot_1m=snap(timeframe="1", close="102", ema20="101", rsi="55"),
+        snapshot_5m=snap(timeframe="5", close="102", ema20="101"),
+    )
+
+    assert PositionActionType.TRAIL_UPDATE not in _types(actions)
+    assert pos.stop_loss_price == Decimal("101")
+
+
+def test_runner_trailing_breach_uses_existing_tighter_stop(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "VERY_STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("3.2")
+    pos.highest_price = Decimal("106")
+    pos.stop_loss_price = Decimal("103")
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("102.9"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="105", l="102.9", c="102.9"),
+        snapshot_1m=snap(timeframe="1", close="102.9", ema20="101", rsi="56"),
+        snapshot_5m=snap(timeframe="5", close="102.9", ema20="101"),
+    )
+
+    assert actions[-1].type == PositionActionType.EXIT
+    assert actions[-1].reason == ExitReason.RUNNER_TRAILING_STOP
+
+
+def test_runner_short_stop_never_moves_against_position(config):
+    pm = PositionManager(config)
+    pos = _pos(side=PositionSide.SHORT, entry="100", risk="1")
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("2.8")
+    pos.lowest_price = Decimal("97")
+    pos.stop_loss_price = Decimal("99")
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("98"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="98.5", l="97.5", c="98"),
+        snapshot_1m=snap(timeframe="1", close="98", ema20="99", rsi="40"),
+        snapshot_5m=snap(timeframe="5", close="98", ema20="99"),
+    )
+
+    assert PositionActionType.TRAIL_UPDATE not in _types(actions)
+    assert pos.stop_loss_price == Decimal("99")
+
+
+def test_runner_disables_stagnation_exit(config):
+    pm = PositionManager(config)
+    pos = _pos(mode=EntryMode.BREAKOUT_CONFIRM, bars=12)
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "WEAK"
+    pos.runner_trailing_atr_multiplier = Decimal("2.0")
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("100.1"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="100.2", l="100", c="100.1"),
+    )
+
+    assert all(a.reason != ExitReason.STAGNATION for a in actions)

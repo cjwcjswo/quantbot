@@ -288,6 +288,27 @@ class ScoutManagementSection(_Section):
     convert_to_active_on_confirmation: bool = True
 
 
+class RunnerModeSection(_Section):
+    enabled: bool = True
+    activate_after_partial_tp: bool = True
+    activate_min_r: float = 2.0
+    weak_trend_trailing_atr: float = 2.0
+    strong_trend_trailing_atr: float = 2.8
+    very_strong_trend_trailing_atr: float = 3.2
+    strong_trend_min_r: float = 2.0
+    very_strong_trend_min_r: float = 5.0
+    require_5m_trend_hold: bool = True
+    require_1m_ema20_hold: bool = True
+    long_min_1m_rsi: float = 50
+    short_max_1m_rsi: float = 50
+    tighten_on_1m_ema20_break_bars: int = 2
+    tighten_on_strong_opposite_candle: bool = True
+    min_trailing_update_interval_sec: int = 5
+    min_trailing_improvement_atr: float = 0.20
+    log_post_exit_mfe: bool = True
+    post_exit_mfe_windows_min: list[int] = Field(default_factory=lambda: [5, 15, 30])
+
+
 class PositionSection(_Section):
     partial_take_profit_r: float = 2.0
     partial_take_profit_fraction: float = 0.50
@@ -298,6 +319,7 @@ class PositionSection(_Section):
     max_holding_minutes: int = 180
     sync_exchange_sl_with_trailing: bool = True
     min_exchange_sl_update_interval_sec: int = 5
+    runner_mode: RunnerModeSection = RunnerModeSection()
     scout_management: ScoutManagementSection = ScoutManagementSection()
 
 

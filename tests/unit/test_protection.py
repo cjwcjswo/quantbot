@@ -116,3 +116,19 @@ async def test_trailing_sl_sync_rate_limited(config, events):
     pos.stop_loss_price = Decimal("101")
     assert await ppm.sync_stop_loss(pos) is False
     assert gw.trading_stops[-1].stop_loss == Decimal("100")
+
+
+async def test_runner_trailing_sl_uses_runner_rate_limit(config, events):
+    config.position.min_exchange_sl_update_interval_sec = 0
+    config.position.runner_mode.min_trailing_update_interval_sec = 60
+    gw = FakeGateway()
+    ppm = _ppm(config, gw, events)
+    pos = _position()
+    pos.status = PositionStatus.ACTIVE
+    pos.runner_mode_active = True
+    pos.stop_loss_price = Decimal("100")
+
+    assert await ppm.sync_stop_loss(pos) is True
+    pos.stop_loss_price = Decimal("101")
+    assert await ppm.sync_stop_loss(pos) is False
+    assert gw.trading_stops[-1].stop_loss == Decimal("100")

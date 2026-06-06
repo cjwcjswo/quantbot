@@ -199,7 +199,36 @@ class ManualInterventionHandler:
         internal.status = PositionStatus.CLOSED
         internal.qty = Decimal("0")
         internal.closed_at = datetime.now(timezone.utc)
-        internal.exit_reason = ExitReason.TRAILING_STOP
+        internal.exit_reason = (
+            ExitReason.RUNNER_TRAILING_STOP
+            if internal.runner_mode_active
+            else ExitReason.TRAILING_STOP
+        )
+        if internal.runner_mode_active:
+            await self._events.publish(
+                BotEvent(
+                    type=BotEventType.RUNNER_TRAILING_STOP,
+                    symbol=internal.symbol,
+                    message="Runner position closed by exchange protection",
+                    data={
+                        "symbol": internal.symbol,
+                        "side": internal.side.value,
+                        "entry_price": str(internal.avg_entry_price),
+                        "remaining_qty": str(prev_qty),
+                        "trend_strength": internal.runner_trend_strength,
+                        "trailing_multiplier": str(
+                            internal.runner_trailing_atr_multiplier
+                        )
+                        if internal.runner_trailing_atr_multiplier is not None
+                        else None,
+                        "new_trailing_stop": str(internal.stop_loss_price)
+                        if internal.stop_loss_price is not None
+                        else None,
+                        "reason": internal.exit_reason.value,
+                        "source": "exchange_protection",
+                    },
+                )
+            )
         await self._events.publish(
             BotEvent(
                 type=BotEventType.POSITION_CLOSED,

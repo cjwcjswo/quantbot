@@ -30,7 +30,14 @@ from packages.core.enums import (
     SignalDirection,
 )
 from packages.core.events import BotEvent, BotEventType
-from packages.core.models import Fill, IndicatorSnapshot, OrderBook, Position, SymbolMeta
+from packages.core.models import (
+    Candle,
+    Fill,
+    IndicatorSnapshot,
+    OrderBook,
+    Position,
+    SymbolMeta,
+)
 from packages.entry import EntryTimingEngine
 from packages.entry.entry_timing_engine import EntryContext
 from packages.entry.candle_metrics import metrics_of
@@ -167,6 +174,18 @@ class MarketContext:
     funding_rate: Decimal | None = None
 
 
+@dataclass
+class PostExitMfeTracker:
+    symbol: str
+    side: PositionSide
+    exit_price: Decimal
+    initial_risk_per_unit: Decimal
+    closed_at: datetime
+    windows_min: list[int]
+    emitted_windows: set[int] = field(default_factory=set)
+    best_price: Decimal | None = None
+
+
 # --------------------------------------------------------------------------- #
 # TradingService
 # --------------------------------------------------------------------------- #
@@ -199,10 +218,83 @@ class TradingService:
         self._protection = protection_manager
         self._logger = trade_logger
         self._events = event_bus
+        self._post_exit_mfe: dict[str, PostExitMfeTracker] = {}
 
     async def _emit(self, event: BotEvent) -> None:
         if self._events is not None:
             await self._events.publish(event)
+
+    def post_exit_mfe_symbols(self) -> list[str]:
+        return list(self._post_exit_mfe)
+
+    def start_post_exit_mfe(
+        self, position: Position, *, exit_price: Decimal | None = None
+    ) -> None:
+        c = self.cfg.position.runner_mode
+        if (
+            not c.enabled
+            or not c.log_post_exit_mfe
+            or position.initial_risk_per_unit is None
+            or position.initial_risk_per_unit <= 0
+        ):
+            return
+        windows = sorted({int(w) for w in c.post_exit_mfe_windows_min if int(w) > 0})
+        if not windows:
+            return
+        self._post_exit_mfe[position.symbol] = PostExitMfeTracker(
+            symbol=position.symbol,
+            side=position.side,
+            exit_price=exit_price or position.stop_loss_price or position.avg_entry_price,
+            initial_risk_per_unit=position.initial_risk_per_unit,
+            closed_at=position.closed_at or datetime.now(timezone.utc),
+            windows_min=windows,
+            best_price=exit_price or position.stop_loss_price or position.avg_entry_price,
+        )
+
+    async def update_post_exit_mfe(
+        self,
+        symbol: str,
+        *,
+        price: Decimal,
+        candle_1m: Candle | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        tracker = self._post_exit_mfe.get(symbol)
+        if tracker is None:
+            return
+        now = now or datetime.now(timezone.utc)
+        if tracker.side == PositionSide.LONG:
+            observed = candle_1m.high if candle_1m is not None else price
+            tracker.best_price = max(tracker.best_price or observed, observed)
+            mfe = tracker.best_price - tracker.exit_price
+        else:
+            observed = candle_1m.low if candle_1m is not None else price
+            tracker.best_price = min(tracker.best_price or observed, observed)
+            mfe = tracker.exit_price - tracker.best_price
+        elapsed_min = (now - tracker.closed_at).total_seconds() / 60
+        for window in tracker.windows_min:
+            if window in tracker.emitted_windows or elapsed_min < window:
+                continue
+            tracker.emitted_windows.add(window)
+            await self._emit(
+                BotEvent(
+                    type=BotEventType.RUNNER_POST_EXIT_MFE,
+                    symbol=symbol,
+                    data={
+                        "symbol": symbol,
+                        "side": tracker.side.value,
+                        "window_min": window,
+                        "exit_price": str(tracker.exit_price),
+                        "best_price_after_exit": str(tracker.best_price),
+                        "post_exit_mfe": str(mfe),
+                        "post_exit_mfe_r": str(
+                            mfe / tracker.initial_risk_per_unit
+                        ),
+                    },
+                )
+            )
+        if len(tracker.emitted_windows) >= len(tracker.windows_min):
+            self._post_exit_mfe.pop(symbol, None)
 
     def _record_order_failure(self) -> None:
         if self._guards.kill_switch is not None:
@@ -794,16 +886,32 @@ class TradingService:
                 await self._close(pos, pos.qty, action.reason, best_bid, best_ask,
                                   full=True, prefer_limit=False)
             elif action.type == PositionActionType.PARTIAL_TP:
+                prev_qty = pos.qty
                 await self._close(pos, action.qty, action.reason, best_bid, best_ask,
                                   full=False, prefer_limit=True)  # §12.2 LIMIT-first
+                if pos.status != PositionStatus.CLOSED and pos.qty < prev_qty:
+                    runner_actions = self._positions.activate_runner_after_partial_tp(
+                        pos,
+                        price=price,
+                        atr=atr,
+                        candle_1m=candle_1m,
+                        snapshot_1m=snapshot_1m,
+                        snapshot_5m=snapshot_5m,
+                        volume_ratio=volume_ratio,
+                    )
+                    actions.extend(runner_actions)
+                    for runner_action in runner_actions:
+                        if runner_action.type == PositionActionType.SCOUT_EVENT:
+                            await self._emit_scout_action(pos, runner_action)
+                        elif runner_action.type == PositionActionType.TRAIL_UPDATE:
+                            await self._sync_trailing_stop(pos, runner_action)
             elif action.type == PositionActionType.REDUCE:
                 await self._close(pos, action.qty, action.reason, best_bid, best_ask,
                                   full=False, prefer_limit=False)
                 await self._emit_scout_action(pos, action)
             elif action.type == PositionActionType.TRAIL_UPDATE:
                 pos.stop_loss_price = action.new_stop
-                if self.mode == BotMode.LIVE and self._protection is not None:
-                    await self._protection.sync_stop_loss(pos)
+                await self._sync_trailing_stop(pos, action)
                 if self._logger is not None:
                     await self._logger.log_position(
                         pos,
@@ -811,6 +919,43 @@ class TradingService:
                         protection_status=self._position_protection_status(pos),
                     )
         return actions
+
+    async def _sync_trailing_stop(self, pos: Position, action) -> None:
+        if self.mode != BotMode.LIVE or self._protection is None:
+            return
+        if pos.runner_mode_active:
+            try:
+                synced = await self._protection.sync_stop_loss(pos)
+            except Exception as exc:  # noqa: BLE001 - retry on next cycle
+                pos.runner_exchange_sl_update_failures += 1
+                data = dict(action.data or {})
+                data.update(
+                    {
+                        "consecutive_failures": pos.runner_exchange_sl_update_failures,
+                        "error": str(exc),
+                    }
+                )
+                await self._emit(
+                    BotEvent(
+                        type=BotEventType.RUNNER_EXCHANGE_SL_UPDATE_FAILED,
+                        symbol=pos.symbol,
+                        message="Runner exchange SL update failed",
+                        data={k: v for k, v in data.items() if v is not None},
+                    )
+                )
+                return
+            if synced:
+                pos.runner_exchange_sl_update_failures = 0
+                await self._emit(
+                    BotEvent(
+                        type=BotEventType.RUNNER_EXCHANGE_SL_UPDATED,
+                        symbol=pos.symbol,
+                        data={k: v for k, v in (action.data or {}).items()
+                              if v is not None},
+                    )
+                )
+            return
+        await self._protection.sync_stop_loss(pos)
 
     async def _emit_scout_action(self, pos, action) -> None:
         if action.event_type is None:
@@ -884,6 +1029,8 @@ class TradingService:
                         opened_at=pos.opened_at, closed_at=pos.closed_at,
                     )
             if pos.status == PositionStatus.CLOSED:
+                if reason == ExitReason.RUNNER_TRAILING_STOP:
+                    self.start_post_exit_mfe(pos, exit_price=result.fill_price)
                 if self._guards.cooldown is not None and pos.entry_mode is not None:
                     self._guards.cooldown.record_result(
                         pos.symbol, pos.entry_mode, is_win=pos.realized_pnl > 0

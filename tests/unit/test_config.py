@@ -46,6 +46,10 @@ def test_loads_repo_config():
     assert cfg.position.scout_management.warning_confirm_bars == 2
     assert cfg.position.scout_management.max_defensive_reductions == 1
     assert cfg.position.scout_management.catastrophic_opposite_candle_volume_ratio == 3.0
+    assert cfg.position.runner_mode.enabled is True
+    assert cfg.position.runner_mode.strong_trend_trailing_atr == 2.8
+    assert cfg.position.runner_mode.very_strong_trend_trailing_atr == 3.2
+    assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 

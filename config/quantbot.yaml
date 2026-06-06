@@ -216,6 +216,28 @@ position:
   max_holding_minutes: 180
   sync_exchange_sl_with_trailing: true
   min_exchange_sl_update_interval_sec: 5
+  runner_mode:
+    enabled: true
+    activate_after_partial_tp: true
+    activate_min_r: 2.0
+    weak_trend_trailing_atr: 2.0
+    strong_trend_trailing_atr: 2.8
+    very_strong_trend_trailing_atr: 3.2
+    strong_trend_min_r: 2.0
+    very_strong_trend_min_r: 5.0
+    require_5m_trend_hold: true
+    require_1m_ema20_hold: true
+    long_min_1m_rsi: 50
+    short_max_1m_rsi: 50
+    tighten_on_1m_ema20_break_bars: 2
+    tighten_on_strong_opposite_candle: true
+    min_trailing_update_interval_sec: 5
+    min_trailing_improvement_atr: 0.20
+    log_post_exit_mfe: true
+    post_exit_mfe_windows_min:
+      - 5
+      - 15
+      - 30
   scout_management:
     enabled: true
     grace_bars: 6

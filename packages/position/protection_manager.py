@@ -174,7 +174,11 @@ class PositionProtectionManager:
             return False
         now = time.monotonic()
         last = self._last_sl_update_at.get(position.symbol, 0.0)
-        interval = self.cfg.position.min_exchange_sl_update_interval_sec
+        interval = (
+            self.cfg.position.runner_mode.min_trailing_update_interval_sec
+            if position.runner_mode_active
+            else self.cfg.position.min_exchange_sl_update_interval_sec
+        )
         if now - last < interval:
             return False
         await self._gw.set_trading_stop(

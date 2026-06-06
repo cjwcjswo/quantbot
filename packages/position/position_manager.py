@@ -61,6 +61,7 @@ class PositionManager:
         self._scenario_recovery: dict[str, int] = {}
         self._break_level_fail_closes: dict[str, int] = {}
         self._scout_ema_reclaim_counts: dict[str, int] = {}
+        self._runner_ema_break_counts: dict[str, int] = {}
 
     def mark_active_paper(self, position: Position) -> None:
         """PAPER positions become ACTIVE once virtual fill + SL/TP stored (§14.1)."""
@@ -115,28 +116,86 @@ class PositionManager:
         if not apply_general_management:
             return prefix_actions
 
+        runner_events = self._runner_state_actions(
+            position,
+            price=price,
+            atr=atr,
+            candle=candle_1m,
+            snapshot_1m=snapshot_1m,
+            snapshot_5m=snapshot_5m,
+            volume_ratio=volume_ratio,
+            max_r=max_r,
+            current_r=r,
+            now=now,
+        )
+
         # 2. trailing stop breach (§14.3)
         if max_r >= self.trailing_start_r:
             position.trailing_active = True
             trail_stop = self._trail_stop(position, atr, max_r)
-            if self._stop_breached(position, price, trail_stop):
-                return prefix_actions + [self._exit(position, ExitReason.TRAILING_STOP)]
+            effective_stop = self._effective_stop(position, trail_stop)
+            if self._stop_breached(position, price, effective_stop):
+                reason = (
+                    ExitReason.RUNNER_TRAILING_STOP
+                    if position.runner_mode_active
+                    else ExitReason.TRAILING_STOP
+                )
+                actions = prefix_actions + runner_events
+                if position.runner_mode_active:
+                    actions.append(
+                        self._runner_event(
+                            position,
+                            "RUNNER_TRAILING_STOP",
+                            price=price,
+                            atr=atr,
+                            current_r=r,
+                            max_r=max_r,
+                            old_stop=position.stop_loss_price,
+                            new_stop=effective_stop,
+                            reason="RUNNER_TRAILING_STOP",
+                        )
+                    )
+                return actions + [self._exit(position, reason)]
 
         # 3. scenario invalidation (§14.5)
+        if (
+            position.runner_mode_active
+            and self._scenario_invalid(position, snapshot_5m, candle_1m, volume_ratio)
+        ):
+            return (
+                prefix_actions
+                + runner_events
+                + [
+                    self._runner_event(
+                        position,
+                        "RUNNER_SCENARIO_INVALID",
+                        price=price,
+                        atr=atr,
+                        current_r=r,
+                        max_r=max_r,
+                        reason="RUNNER_SCENARIO_INVALID",
+                    ),
+                    self._exit(position, ExitReason.RUNNER_SCENARIO_INVALID),
+                ]
+            )
         scenario = self._scenario_action(position, r, snapshot_5m, candle_1m, volume_ratio)
         if scenario is not None:
-            return prefix_actions + [scenario]
+            return prefix_actions + runner_events + [scenario]
 
         # 4. stagnation (§14.4)
-        stagnation = self._stagnation_action(position, max_r)
+        stagnation = None if position.runner_mode_active else self._stagnation_action(
+            position, max_r
+        )
         if stagnation is not None:
-            return prefix_actions + [stagnation]
+            return prefix_actions + runner_events + [stagnation]
 
-        actions: list[PositionAction] = list(prefix_actions)
+        actions: list[PositionAction] = list(prefix_actions) + runner_events
 
         # 5. partial take-profit (§14.2)
+        partial_requested = False
         if not position.partial_tp_done and r >= self.partial_r:
             position.partial_tp_done = True
+            partial_requested = True
             actions.append(
                 PositionAction(
                     type=PositionActionType.PARTIAL_TP,
@@ -146,15 +205,363 @@ class PositionManager:
             )
 
         # 6. trailing-stop ratchet update
-        if position.trailing_active:
+        if position.trailing_active and not partial_requested:
             trail_stop = self._trail_stop(position, atr, max_r)
             new_stop = self._ratchet(position, trail_stop)
-            if new_stop is not None:
+            if new_stop is not None and self._runner_trailing_update_allowed(
+                position, new_stop, atr, now
+            ):
+                old_stop = position.stop_loss_price
                 position.stop_loss_price = new_stop
+                self._record_runner_trailing_update(position, new_stop, now)
+                if position.runner_mode_active:
+                    actions.append(
+                        self._runner_event(
+                            position,
+                            "RUNNER_TRAILING_UPDATED",
+                            price=price,
+                            atr=atr,
+                            current_r=r,
+                            max_r=max_r,
+                            old_stop=old_stop,
+                            new_stop=new_stop,
+                        )
+                    )
                 actions.append(
                     PositionAction(type=PositionActionType.TRAIL_UPDATE, new_stop=new_stop)
                 )
         return actions
+
+    # ------------------------------------------------------------------ #
+    # Runner Mode after partial TP
+    # ------------------------------------------------------------------ #
+    def activate_runner_after_partial_tp(
+        self,
+        position: Position,
+        *,
+        price: Decimal,
+        atr: Decimal,
+        candle_1m: Candle | None = None,
+        snapshot_1m: IndicatorSnapshot | None = None,
+        snapshot_5m: IndicatorSnapshot | None = None,
+        volume_ratio: Decimal | None = None,
+        now: datetime | None = None,
+    ) -> list[PositionAction]:
+        c = self.cfg.position.runner_mode
+        now = now or datetime.now(timezone.utc)
+        self._update_extremes(position, price, candle_1m)
+        current_r = self.r_multiple(position, price)
+        max_r = max(self._max_r.get(position.symbol, Decimal(0)), current_r)
+        if (
+            not c.enabled
+            or not c.activate_after_partial_tp
+            or not position.partial_tp_done
+            or position.runner_mode_active
+            or position.qty <= 0
+            or max_r < Decimal(str(c.activate_min_r))
+        ):
+            return []
+
+        strength, reason = self._runner_trend_strength(
+            position,
+            max_r=max_r,
+            candle=candle_1m,
+            snapshot_1m=snapshot_1m,
+            snapshot_5m=snapshot_5m,
+            volume_ratio=volume_ratio,
+        )
+        multiplier = self._runner_multiplier(strength)
+        position.runner_mode_active = True
+        position.runner_mode_started_at = now
+        position.runner_trend_strength = strength
+        position.runner_trailing_atr_multiplier = multiplier
+        actions = [
+            self._runner_event(
+                position,
+                "RUNNER_MODE_ACTIVATED",
+                price=price,
+                atr=atr,
+                current_r=current_r,
+                max_r=max_r,
+                reason=reason or "PARTIAL_TP_FILLED",
+            )
+        ]
+        trail_stop = self._trail_stop(position, atr, max_r)
+        new_stop = self._ratchet(position, trail_stop)
+        if new_stop is not None and self._runner_trailing_update_allowed(
+            position, new_stop, atr, now
+        ):
+            old_stop = position.stop_loss_price
+            position.stop_loss_price = new_stop
+            self._record_runner_trailing_update(position, new_stop, now)
+            actions.append(
+                self._runner_event(
+                    position,
+                    "RUNNER_TRAILING_UPDATED",
+                    price=price,
+                    atr=atr,
+                    current_r=current_r,
+                    max_r=max_r,
+                    old_stop=old_stop,
+                    new_stop=new_stop,
+                    reason="RUNNER_MODE_ACTIVATED",
+                )
+            )
+            actions.append(PositionAction(type=PositionActionType.TRAIL_UPDATE, new_stop=new_stop))
+        return actions
+
+    def _runner_state_actions(
+        self,
+        position: Position,
+        *,
+        price: Decimal,
+        atr: Decimal,
+        candle: Candle | None,
+        snapshot_1m: IndicatorSnapshot | None,
+        snapshot_5m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+        max_r: Decimal,
+        current_r: Decimal,
+        now: datetime,
+    ) -> list[PositionAction]:
+        if not position.runner_mode_active:
+            return []
+        strength, reason = self._runner_trend_strength(
+            position,
+            max_r=max_r,
+            candle=candle,
+            snapshot_1m=snapshot_1m,
+            snapshot_5m=snapshot_5m,
+            volume_ratio=volume_ratio,
+        )
+        old = position.runner_trend_strength
+        position.runner_trend_strength = strength
+        position.runner_trailing_atr_multiplier = self._runner_multiplier(strength)
+        if old is None or old == strength:
+            return []
+        return [
+            self._runner_event(
+                position,
+                "RUNNER_TREND_STRENGTH_CHANGED",
+                price=price,
+                atr=atr,
+                current_r=current_r,
+                max_r=max_r,
+                reason=reason or f"{old}_TO_{strength}",
+            )
+        ]
+
+    def _runner_trend_strength(
+        self,
+        position: Position,
+        *,
+        max_r: Decimal,
+        candle: Candle | None,
+        snapshot_1m: IndicatorSnapshot | None,
+        snapshot_5m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+    ) -> tuple[str, str | None]:
+        weak_reason = self._runner_weakening_reason(
+            position, candle, snapshot_1m, snapshot_5m, volume_ratio
+        )
+        if weak_reason is not None:
+            return "WEAK", weak_reason
+
+        c = self.cfg.position.runner_mode
+        strong_min_r = Decimal(str(c.strong_trend_min_r))
+        very_min_r = Decimal(str(c.very_strong_trend_min_r))
+        strong = max_r >= strong_min_r and self._runner_trend_holds(
+            position, snapshot_1m, snapshot_5m
+        )
+        if not strong:
+            return "WEAK", "TREND_HOLD_WEAK"
+
+        rsi = snapshot_1m.rsi14 if snapshot_1m is not None else None
+        very = max_r >= very_min_r
+        if position.side == PositionSide.LONG:
+            very = very and rsi is not None and rsi >= Decimal(
+                str(c.long_min_1m_rsi + 5)
+            )
+        else:
+            very = very and rsi is not None and rsi <= Decimal(
+                str(c.short_max_1m_rsi - 5)
+            )
+        if very:
+            return "VERY_STRONG", "VERY_STRONG_TREND_HOLD"
+        return "STRONG", "STRONG_TREND_HOLD"
+
+    def _runner_trend_holds(
+        self,
+        position: Position,
+        snapshot_1m: IndicatorSnapshot | None,
+        snapshot_5m: IndicatorSnapshot | None,
+    ) -> bool:
+        c = self.cfg.position.runner_mode
+        long = position.side == PositionSide.LONG
+        if c.require_5m_trend_hold:
+            if snapshot_5m is None or snapshot_5m.ema20 is None:
+                return False
+            if long and snapshot_5m.close <= snapshot_5m.ema20:
+                return False
+            if not long and snapshot_5m.close >= snapshot_5m.ema20:
+                return False
+        if c.require_1m_ema20_hold:
+            if snapshot_1m is None or snapshot_1m.ema20 is None:
+                return False
+            if long and snapshot_1m.close <= snapshot_1m.ema20:
+                return False
+            if not long and snapshot_1m.close >= snapshot_1m.ema20:
+                return False
+        if snapshot_1m is None or snapshot_1m.rsi14 is None:
+            return False
+        if long:
+            return snapshot_1m.rsi14 >= Decimal(str(c.long_min_1m_rsi))
+        return snapshot_1m.rsi14 <= Decimal(str(c.short_max_1m_rsi))
+
+    def _runner_weakening_reason(
+        self,
+        position: Position,
+        candle: Candle | None,
+        snapshot_1m: IndicatorSnapshot | None,
+        snapshot_5m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+    ) -> str | None:
+        c = self.cfg.position.runner_mode
+        long = position.side == PositionSide.LONG
+        if snapshot_5m is not None and snapshot_5m.ema20 is not None:
+            if long and snapshot_5m.close < snapshot_5m.ema20:
+                return "FIVE_MIN_EMA20_BREAK"
+            if not long and snapshot_5m.close > snapshot_5m.ema20:
+                return "FIVE_MIN_EMA20_BREAK"
+        if candle is not None and snapshot_1m is not None and snapshot_1m.ema20 is not None:
+            against = (
+                candle.close < snapshot_1m.ema20
+                if long
+                else candle.close > snapshot_1m.ema20
+            )
+            if against:
+                count = self._runner_ema_break_counts.get(position.symbol, 0) + 1
+                self._runner_ema_break_counts[position.symbol] = count
+                if count >= c.tighten_on_1m_ema20_break_bars:
+                    return "ONE_MIN_EMA20_BREAK"
+            else:
+                self._runner_ema_break_counts[position.symbol] = 0
+        if (
+            c.tighten_on_strong_opposite_candle
+            and candle is not None
+            and self._runner_strong_opposite_candle(position, candle, volume_ratio)
+        ):
+            return "STRONG_OPPOSITE_CANDLE"
+        return None
+
+    def _runner_strong_opposite_candle(
+        self,
+        position: Position,
+        candle: Candle,
+        volume_ratio: Decimal | None,
+    ) -> bool:
+        if volume_ratio is None:
+            return False
+        m = metrics_of(candle)
+        if (
+            not m.valid
+            or m.body_ratio < Decimal("0.55")
+            or volume_ratio < Decimal("1.5")
+        ):
+            return False
+        if position.side == PositionSide.LONG:
+            return (
+                candle.close < candle.open
+                and m.close_position_in_range <= Decimal("0.25")
+            )
+        return (
+            candle.close > candle.open
+            and m.close_position_in_range >= Decimal("0.75")
+        )
+
+    def _runner_multiplier(self, trend_strength: str) -> Decimal:
+        c = self.cfg.position.runner_mode
+        if trend_strength == "VERY_STRONG":
+            return Decimal(str(c.very_strong_trend_trailing_atr))
+        if trend_strength == "STRONG":
+            return Decimal(str(c.strong_trend_trailing_atr))
+        return Decimal(str(c.weak_trend_trailing_atr))
+
+    def _runner_trailing_update_allowed(
+        self,
+        position: Position,
+        new_stop: Decimal,
+        atr: Decimal,
+        now: datetime,
+    ) -> bool:
+        if not position.runner_mode_active:
+            return True
+        last_at = position.last_runner_trailing_update_at
+        c = self.cfg.position.runner_mode
+        if last_at is not None:
+            elapsed = (now - last_at).total_seconds()
+            if elapsed < c.min_trailing_update_interval_sec:
+                return False
+        last_stop = position.last_runner_trailing_stop or position.stop_loss_price
+        if last_stop is None or atr <= 0:
+            return True
+        improvement = (
+            new_stop - last_stop
+            if position.side == PositionSide.LONG
+            else last_stop - new_stop
+        )
+        return improvement >= atr * Decimal(str(c.min_trailing_improvement_atr))
+
+    def _record_runner_trailing_update(
+        self, position: Position, new_stop: Decimal, now: datetime
+    ) -> None:
+        if not position.runner_mode_active:
+            return
+        position.last_runner_trailing_update_at = now
+        position.last_runner_trailing_stop = new_stop
+
+    def _runner_event(
+        self,
+        position: Position,
+        event_type: str,
+        *,
+        price: Decimal,
+        atr: Decimal,
+        current_r: Decimal,
+        max_r: Decimal,
+        old_stop: Decimal | None = None,
+        new_stop: Decimal | None = None,
+        reason: str | None = None,
+    ) -> PositionAction:
+        return PositionAction(
+            type=PositionActionType.SCOUT_EVENT,
+            event_type=event_type,
+            data={
+                "symbol": position.symbol,
+                "side": position.side.value,
+                "entry_price": str(position.avg_entry_price),
+                "current_price": str(price),
+                "remaining_qty": str(position.qty),
+                "max_r": str(max_r),
+                "current_r": str(current_r),
+                "trend_strength": position.runner_trend_strength,
+                "trailing_multiplier": str(position.runner_trailing_atr_multiplier)
+                if position.runner_trailing_atr_multiplier is not None
+                else None,
+                "atr": str(atr),
+                "highest_price": str(position.highest_price)
+                if position.highest_price is not None
+                else None,
+                "lowest_price": str(position.lowest_price)
+                if position.lowest_price is not None
+                else None,
+                "old_trailing_stop": str(old_stop) if old_stop is not None else None,
+                "new_trailing_stop": str(new_stop) if new_stop is not None else None,
+                "exchange_sl_before": str(old_stop) if old_stop is not None else None,
+                "exchange_sl_after": str(new_stop) if new_stop is not None else None,
+                "reason": reason,
+            },
+        )
 
     # ------------------------------------------------------------------ #
     # PRE_BREAKOUT_SCOUT management
@@ -700,11 +1107,17 @@ class PositionManager:
         )
 
     def _trail_stop(self, position: Position, atr: Decimal, max_r: Decimal) -> Decimal:
-        mult = (
-            self.trailing_ext_mult
-            if max_r >= self.trailing_ext_after_r
-            else self.trailing_mult
-        )
+        if (
+            position.runner_mode_active
+            and position.runner_trailing_atr_multiplier is not None
+        ):
+            mult = position.runner_trailing_atr_multiplier
+        else:
+            mult = (
+                self.trailing_ext_mult
+                if max_r >= self.trailing_ext_after_r
+                else self.trailing_mult
+            )
         if position.side == PositionSide.LONG:
             anchor = position.highest_price or position.avg_entry_price
             return anchor - atr * mult
@@ -717,6 +1130,15 @@ class PositionManager:
         if position.side == PositionSide.LONG:
             return price <= stop
         return price >= stop
+
+    def _effective_stop(self, position: Position, trail_stop: Decimal) -> Decimal:
+        """Use the more protective stop when dynamic trailing would be looser."""
+        cur = position.stop_loss_price
+        if cur is None:
+            return trail_stop
+        if position.side == PositionSide.LONG:
+            return max(cur, trail_stop)
+        return min(cur, trail_stop)
 
     def _ratchet(self, position: Position, trail_stop: Decimal) -> Decimal | None:
         """Move the stop in the favourable direction only."""

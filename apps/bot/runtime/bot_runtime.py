@@ -706,7 +706,12 @@ class BotRuntime:
         symbols = self._watchlist
         # already-open bot positions are always watched (for management)
         held = [p.symbol for p in self.runtime_state.active_bot_positions()]
-        watch = list(dict.fromkeys(held + symbols))
+        post_exit_mfe = (
+            self._trading.post_exit_mfe_symbols()
+            if self._trading is not None
+            else []
+        )
+        watch = list(dict.fromkeys(held + post_exit_mfe + symbols))
         return watch[: self.config.bot.max_symbols_to_watch]
 
     async def _refresh_watchlist_if_due(self, *, force: bool = False) -> None:
@@ -881,6 +886,11 @@ class BotRuntime:
                 return None
             now_ms = int(time.time() * 1000)
         bid, ask = ticker.bid_price, ticker.ask_price
+        await self._trading.update_post_exit_mfe(
+            symbol,
+            price=ticker.last_price,
+            candle_1m=self._collector.store.last_closed(symbol, "1"),
+        )
 
         # manage an existing position first
         pos = self.runtime_state.get_position(symbol)
@@ -1171,6 +1181,16 @@ class BotRuntime:
             "changed": result.changed,
             "ts_ms": int(time.time() * 1000),
         }
+        if self._trading is not None:
+            for symbol in result.exchange_closes:
+                pos = self.runtime_state.get_position(symbol)
+                if (
+                    pos is not None
+                    and pos.exit_reason == ExitReason.RUNNER_TRAILING_STOP
+                ):
+                    self._trading.start_post_exit_mfe(
+                        pos, exit_price=pos.stop_loss_price
+                    )
         if self._kill_switch is None:
             return
         if result.qty_mismatches or result.external_closes:

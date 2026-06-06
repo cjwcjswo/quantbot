@@ -135,6 +135,13 @@ class Position(_Mut):
     lowest_price: Decimal | None = None  # for short trailing
     partial_tp_done: bool = False
     trailing_active: bool = False
+    runner_mode_active: bool = False
+    runner_mode_started_at: datetime | None = None
+    runner_trend_strength: str | None = None
+    runner_trailing_atr_multiplier: Decimal | None = None
+    last_runner_trailing_update_at: datetime | None = None
+    last_runner_trailing_stop: Decimal | None = None
+    runner_exchange_sl_update_failures: int = 0
     bars_since_entry: int = 0
     breakout_level: Decimal | None = None
     scout_state: ScoutState = ScoutState.NONE

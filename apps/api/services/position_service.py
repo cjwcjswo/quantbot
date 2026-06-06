@@ -57,6 +57,10 @@ def _from_snapshot(p: dict, mode: str | None) -> dict:
         "stop_loss_price": p.get("stop_loss"),
         "take_profit_price": p.get("take_profit"),
         "opened_at": p.get("opened_at"),
+        "runner_mode_active": p.get("runner_mode_active", False),
+        "runner_trend_strength": p.get("runner_trend_strength"),
+        "runner_trailing_atr_multiplier": p.get("runner_trailing_atr_multiplier"),
+        "last_runner_trailing_stop": p.get("last_runner_trailing_stop"),
     }
 
 
