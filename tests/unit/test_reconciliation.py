@@ -17,12 +17,32 @@ from packages.reconciliation import ManualInterventionHandler, ReconciliationMan
 from tests.fakes import FakeGateway
 
 
-def _make(config, events):
+class _PersistedPositionCleanupLogger:
+    def __init__(self, closed: list[str]) -> None:
+        self.closed = closed
+        self.calls = []
+
+    async def close_stale_open_position_snapshots(self, *, active_symbols, mode):
+        self.calls.append((set(active_symbols), mode))
+        return self.closed
+
+    async def log_reconciliation(self, summary):
+        self.summary = summary
+
+    async def log_manual_intervention(self, symbol, kind, data):
+        self.manual_intervention = (symbol, kind, data)
+
+
+def _make(config, events, trade_logger=None):
     state = RuntimeState()
     bus = EventBus(redis=None, sink=events)
-    handler = ManualInterventionHandler(state, bus, config.manual_intervention)
+    handler = ManualInterventionHandler(
+        state, bus, config.manual_intervention, trade_logger=trade_logger
+    )
     gw = FakeGateway()
-    recon = ReconciliationManager(gw, state, handler, bus, config.reconciliation)
+    recon = ReconciliationManager(
+        gw, state, handler, bus, config.reconciliation, trade_logger=trade_logger
+    )
     return state, gw, recon
 
 
@@ -334,6 +354,28 @@ async def test_stale_bot_reduce_order_cancelled_after_position_flat(config, even
     assert result.external_orders == []
     assert state.external_orders == {}
     assert not state.new_entries_paused()
+
+
+async def test_persisted_open_positions_closed_when_exchange_and_runtime_flat(
+    config, events
+):
+    logger = _PersistedPositionCleanupLogger(["ETHUSDT"])
+    state, gw, recon = _make(config, events, trade_logger=logger)
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            size=Decimal("1"),
+            avg_price=Decimal("100"),
+        )
+    )
+
+    result = await recon.reconcile_once()
+
+    assert logger.calls == [({"BTCUSDT"}, "LIVE")]
+    assert result.persisted_positions_closed == ["ETHUSDT"]
+    assert result.changed is True
+    assert logger.summary["persisted_positions_closed"] == ["ETHUSDT"]
 
 
 async def test_in_sync_no_events(config, events):

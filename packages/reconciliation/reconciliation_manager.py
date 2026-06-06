@@ -34,6 +34,7 @@ class ReconcileResult:
     exchange_closes: list[str] = field(default_factory=list)
     external_orders: list[str] = field(default_factory=list)
     stale_bot_orders_cancelled: list[str] = field(default_factory=list)
+    persisted_positions_closed: list[str] = field(default_factory=list)
 
     @property
     def changed(self) -> bool:
@@ -44,6 +45,7 @@ class ReconcileResult:
             or self.exchange_closes
             or self.external_orders
             or self.stale_bot_orders_cancelled
+            or self.persisted_positions_closed
         )
 
 
@@ -80,6 +82,7 @@ class ReconciliationManager:
             "exchange_closes": result.exchange_closes,
             "external_orders": result.external_orders,
             "stale_bot_orders_cancelled": result.stale_bot_orders_cancelled,
+            "persisted_positions_closed": result.persisted_positions_closed,
         }
         await self._events.publish(
             BotEvent(type=BotEventType.RECONCILED,
@@ -129,6 +132,29 @@ class ReconciliationManager:
                 else:
                     await self._handler.handle_external_close(internal)
                     result.external_closes.append(symbol)
+        await self._close_stale_persisted_positions(exch_by_symbol, result)
+
+    async def _close_stale_persisted_positions(
+        self, exch_by_symbol: dict, result: ReconcileResult
+    ) -> None:
+        close_stale = getattr(
+            self._logger, "close_stale_open_position_snapshots", None
+        )
+        if close_stale is None:
+            return
+        active_symbols = set(exch_by_symbol)
+        active_symbols.update(
+            symbol
+            for symbol, position in self._state.positions.items()
+            if position.status
+            in (PositionStatus.PENDING, PositionStatus.ACTIVE, PositionStatus.CLOSING)
+        )
+        try:
+            closed = await close_stale(active_symbols=active_symbols, mode="LIVE")
+        except Exception:
+            logger.exception("stale persisted position cleanup failed")
+            return
+        result.persisted_positions_closed.extend(closed)
 
     async def _reconcile_orders(self, result: ReconcileResult) -> None:
         known = self._state.known_order_ids()

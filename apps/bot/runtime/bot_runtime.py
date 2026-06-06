@@ -1166,6 +1166,8 @@ class BotRuntime:
             "external_closes": result.external_closes,
             "exchange_closes": result.exchange_closes,
             "external_orders": result.external_orders,
+            "stale_bot_orders_cancelled": result.stale_bot_orders_cancelled,
+            "persisted_positions_closed": result.persisted_positions_closed,
             "changed": result.changed,
             "ts_ms": int(time.time() * 1000),
         }

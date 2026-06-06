@@ -154,6 +154,80 @@ async def test_log_closed_position_closes_previous_open_snapshots(session_factor
     assert order.status == "CANCELLED"
 
 
+async def test_close_stale_open_position_snapshots_keeps_active_and_paper(session_factory):
+    tl = TradeLogger(session_factory)
+    await tl.log_order(
+        Order(
+            symbol="BTCUSDT",
+            side=Side.SELL,
+            order_type=OrderType.LIMIT,
+            qty=Decimal("1"),
+            price=Decimal("99"),
+            status=OrderStatus.NEW,
+            client_order_id="sl-stale",
+            reduce_only=True,
+        ),
+        mode="LIVE",
+        source="BOT",
+    )
+    await tl.log_position(
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+        ),
+        mode="LIVE",
+    )
+    await tl.log_position(
+        Position(
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+        ),
+        mode="LIVE",
+    )
+    await tl.log_position(
+        Position(
+            symbol="SOLUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+        ),
+        mode="PAPER",
+    )
+
+    closed = await tl.close_stale_open_position_snapshots(
+        active_symbols={"ETHUSDT"},
+        mode="LIVE",
+    )
+
+    async with session_factory() as s:
+        rows = {
+            row.symbol: row
+            for row in (
+                await s.execute(select(PositionRow).order_by(PositionRow.id))
+            ).scalars().all()
+        }
+        order = (
+            await s.execute(
+                select(OrderRow).where(OrderRow.client_order_id == "sl-stale")
+            )
+        ).scalar_one()
+
+    assert closed == ["BTCUSDT"]
+    assert rows["BTCUSDT"].status == "CLOSED"
+    assert rows["BTCUSDT"].qty == "0"
+    assert rows["BTCUSDT"].exit_reason == "RECONCILED_FLAT"
+    assert rows["ETHUSDT"].status == "ACTIVE"
+    assert rows["SOLUSDT"].status == "ACTIVE"
+    assert order.status == "CANCELLED"
+
+
 async def test_log_trade_truncates_long_r_multiple(session_factory):
     tl = TradeLogger(session_factory)
     await tl.log_trade(

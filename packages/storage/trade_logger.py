@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -47,6 +48,21 @@ def _max_text(value: str | None, limit: int) -> str | None:
         return value
     logger.warning("truncating persisted text field to %s chars", limit)
     return value[:limit]
+
+
+def _qty_is_positive(value: str | None) -> bool:
+    try:
+        return Decimal(str(value)) > 0
+    except (InvalidOperation, TypeError, ValueError):
+        return True
+
+
+def _matches_live_mode(value: str | None, mode: str | None) -> bool:
+    if mode == "LIVE":
+        return value in ("LIVE", None)
+    if mode is None:
+        return True
+    return value == mode
 
 
 class TradeLogger:
@@ -283,6 +299,85 @@ class TradeLogger:
                 )
             session.add(row)
             await session.commit()
+
+    async def close_stale_open_position_snapshots(
+        self,
+        *,
+        active_symbols: set[str],
+        mode: str | None = "LIVE",
+    ) -> list[str]:
+        """Close persisted open snapshots that are absent from live reconciliation."""
+
+        async with self._sf() as session:
+            rows = (await session.execute(
+                select(PositionRow).order_by(PositionRow.id.desc())
+            )).scalars().all()
+
+            stale_symbols: list[str] = []
+            seen: set[str] = set()
+            for row in rows:
+                if row.symbol in seen:
+                    continue
+                seen.add(row.symbol)
+                if row.symbol in active_symbols:
+                    continue
+                if row.status not in ("PENDING", "ACTIVE", "CLOSING"):
+                    continue
+                if not _matches_live_mode(row.mode, mode):
+                    continue
+                if not _qty_is_positive(row.qty):
+                    continue
+                stale_symbols.append(row.symbol)
+
+            if not stale_symbols:
+                return []
+
+            now = _utcnow()
+            position_filters = [
+                PositionRow.symbol.in_(stale_symbols),
+                PositionRow.status.in_(("PENDING", "ACTIVE", "CLOSING")),
+            ]
+            order_filters = [
+                OrderRow.symbol.in_(stale_symbols),
+                OrderRow.reduce_only.is_(True),
+                OrderRow.status.in_(
+                    (
+                        OrderStatus.NEW.value,
+                        OrderStatus.PARTIALLY_FILLED.value,
+                    )
+                ),
+            ]
+            if mode == "LIVE":
+                position_filters.append(
+                    or_(PositionRow.mode == "LIVE", PositionRow.mode.is_(None))
+                )
+                order_filters.append(
+                    or_(OrderRow.mode == "LIVE", OrderRow.mode.is_(None))
+                )
+            elif mode is not None:
+                position_filters.append(PositionRow.mode == mode)
+                order_filters.append(OrderRow.mode == mode)
+
+            await session.execute(
+                update(PositionRow)
+                .where(*position_filters)
+                .values(
+                    status=PositionStatus.CLOSED.value,
+                    qty="0",
+                    exit_reason="RECONCILED_FLAT",
+                    closed_at=now,
+                )
+            )
+            await session.execute(
+                update(OrderRow)
+                .where(*order_filters)
+                .values(
+                    status=OrderStatus.CANCELLED.value,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+            return stale_symbols
 
     async def log_trade(
         self,
