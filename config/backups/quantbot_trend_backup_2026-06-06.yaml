@@ -1,3 +1,6 @@
+# Backup note: 추세형 기존 설정 백업. Scout 진입 완화 전 원본값.
+# Created: 2026-06-06
+
 bot:
   mode: "LIVE"
   account_currency: "USDT"
@@ -78,18 +81,18 @@ entry:
     min_score: 6
     position_fraction: 0.30
     stop_atr: 0.7
-    min_volume_ratio: 0.55
-    max_distance_to_box_atr: 0.65
+    min_volume_ratio: 0.8
+    max_distance_to_box_atr: 0.45
     require_compression: false
     compression_bonus_score: 2
-    compression_min_score: 5
-    no_compression_min_score: 6
-    compression_position_fraction: 0.25
-    no_compression_position_fraction: 0.15
-    long_rsi_min: 44
-    long_rsi_max: 68
-    short_rsi_min: 32
-    short_rsi_max: 58
+    compression_min_score: 6
+    no_compression_min_score: 7
+    compression_position_fraction: 0.30
+    no_compression_position_fraction: 0.20
+    long_rsi_min: 46
+    long_rsi_max: 64
+    short_rsi_min: 36
+    short_rsi_max: 54
     score_gap_high_percent_15m: 0.30
     score_slope_high_atr_15m: 0.10
     score_long_rsi_center_min: 50
@@ -149,7 +152,7 @@ orders:
   retest_order_type: "LIMIT"
   max_slippage_percent: 0.08
   limit_order_ttl_sec: 10
-  scout_limit_order_ttl_sec: 45
+  scout_limit_order_ttl_sec: 30
   retest_limit_order_ttl_sec: 20
   limit_reorder_attempts: 1
   aggressive_limit_time_in_force: "IOC"

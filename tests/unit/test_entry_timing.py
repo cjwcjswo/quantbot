@@ -246,9 +246,9 @@ def test_scout_entry(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.30")
+    assert decision.position_fraction == Decimal("0.25")
     assert decision.stop_atr == Decimal("0.7")
-    assert decision.score >= Decimal("6")
+    assert decision.score >= Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
 
 
@@ -265,13 +265,13 @@ def test_scout_with_compression_score_6_allowed(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.30")
+    assert decision.position_fraction == Decimal("0.25")
     assert decision.score == Decimal("6")
-    assert decision.required_score == Decimal("6")
+    assert decision.required_score == Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
 
 
-def test_scout_with_compression_score_5_blocks(config):
+def test_scout_with_compression_score_5_allowed(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles()
     ctx = _ctx(
@@ -282,10 +282,11 @@ def test_scout_with_compression_score_5_blocks(config):
                             slope="0.01", atr="1", atr_percent="1.5",
                             volume_ratio="1.0")
     decision = eng.evaluate(ctx)
-    assert decision is None
-    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW"
-    assert eng.last_no_entry_reason["has_compression"] is True
-    assert eng.last_no_entry_reason["required_scout_score"] == "6"
+    assert decision is not None
+    assert decision.position_fraction == Decimal("0.25")
+    assert decision.score == Decimal("5")
+    assert decision.required_score == Decimal("5")
+    assert decision.compression_mode == "WITH_COMPRESSION"
 
 
 def test_scout_without_compression_score_7_allowed_smaller_fraction(config):
@@ -298,14 +299,14 @@ def test_scout_without_compression_score_7_allowed_smaller_fraction(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.20")
+    assert decision.position_fraction == Decimal("0.15")
     assert decision.score == Decimal("7")
-    assert decision.required_score == Decimal("7")
+    assert decision.required_score == Decimal("6")
     assert decision.compression_mode == "WITHOUT_COMPRESSION"
     assert decision.compression_bonus_applied == Decimal("0")
 
 
-def test_scout_without_compression_score_6_blocks(config):
+def test_scout_without_compression_score_6_allowed(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles_no_compression()
     ctx = _ctx(
@@ -313,13 +314,11 @@ def test_scout_without_compression_score_6_blocks(config):
         s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.8", "atr": "1"},
     )
     decision = eng.evaluate(ctx)
-    assert decision is None
-    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION"
-    assert eng.last_no_entry_reason["has_compression"] is False
-    assert eng.last_no_entry_reason["scout_score"] == "6"
-    assert eng.last_no_entry_reason["required_scout_score"] == "7"
-    assert eng.last_no_entry_reason["position_fraction"] == "0.2"
-    assert eng.last_no_entry_reason["compression_mode"] == "WITHOUT_COMPRESSION"
+    assert decision is not None
+    assert decision.position_fraction == Decimal("0.15")
+    assert decision.score == Decimal("6")
+    assert decision.required_score == Decimal("6")
+    assert decision.compression_mode == "WITHOUT_COMPRESSION"
 
 
 def test_scout_without_compression_still_respects_anti_chase(config):

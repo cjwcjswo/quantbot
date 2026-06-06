@@ -24,17 +24,24 @@ def test_loads_repo_config():
     assert cfg.orders.scout_order_type == "LIMIT"
     assert cfg.orders.breakout_order_type == "AGGRESSIVE_LIMIT"
     assert cfg.orders.retest_order_type == "LIMIT"
-    assert cfg.orders.scout_limit_order_ttl_sec == 30
+    assert cfg.orders.scout_limit_order_ttl_sec == 45
     assert cfg.orders.retest_limit_order_ttl_sec == 20
     assert cfg.entry.anti_chase.max_rsi_long == 70
     assert cfg.position_protection.max_seconds_position_without_tpsl == 3
     assert cfg.reconciliation.interval_sec_when_flat == 10
     assert cfg.api.app_env == "production"
     assert cfg.entry.pre_breakout.min_score == 6
-    assert cfg.entry.pre_breakout.min_volume_ratio == 0.8
+    assert cfg.entry.pre_breakout.min_volume_ratio == 0.55
+    assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.require_compression is False
-    assert cfg.entry.pre_breakout.no_compression_min_score == 7
-    assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.20
+    assert cfg.entry.pre_breakout.compression_min_score == 5
+    assert cfg.entry.pre_breakout.no_compression_min_score == 6
+    assert cfg.entry.pre_breakout.compression_position_fraction == 0.25
+    assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.15
+    assert cfg.entry.pre_breakout.long_rsi_min == 44
+    assert cfg.entry.pre_breakout.long_rsi_max == 68
+    assert cfg.entry.pre_breakout.short_rsi_min == 32
+    assert cfg.entry.pre_breakout.short_rsi_max == 58
     assert cfg.entry.retest_confirm.stop_atr == 1.3
     assert cfg.volatility_adaptive_stop.enabled is True
     assert cfg.volatility_adaptive_stop.retest_atr_percent_tiers[1].stop_atr == 1.3
