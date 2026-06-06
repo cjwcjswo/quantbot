@@ -89,7 +89,11 @@ class RiskManager:
             symbol_meta.tick_size,
         )
         structure_stop = self._structure_stop_price(decision, symbol_meta)
-        stop = self._select_stop(side, atr_stop, structure_stop)
+        selected_stop = self._select_stop(side, atr_stop, structure_stop)
+        min_distance_stop = self._min_distance_stop_price(
+            decision.entry_mode, entry_price, side, symbol_meta
+        )
+        stop = self._select_stop(side, selected_stop, min_distance_stop)
         stop_metadata = self._with_stop_metadata(
             decision=decision,
             side=side,
@@ -97,6 +101,8 @@ class RiskManager:
             atr=atr,
             atr_stop=atr_stop,
             structure_stop=structure_stop,
+            min_distance_stop=min_distance_stop,
+            stop_before_min_distance=selected_stop,
             selected_stop=stop,
             metadata=stop_metadata,
         )
@@ -211,8 +217,6 @@ class RiskManager:
     def _structure_stop_price(
         self, decision: EntryDecision, symbol_meta: SymbolMeta
     ) -> Decimal | None:
-        if decision.entry_mode != EntryMode.RETEST_CONFIRM:
-            return None
         if decision.structure_stop_price is None:
             return None
         if not self._structure_stop_enabled(decision.entry_mode):
@@ -223,9 +227,33 @@ class RiskManager:
         c = self.cfg.structure_stop
         if not c.enabled:
             return False
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT and not c.use_structure_stop_for_scout:
+            return False
         if entry_mode == EntryMode.RETEST_CONFIRM and not c.use_structure_stop_for_retest:
             return False
         return entry_mode.value in set(c.apply_to_entry_modes)
+
+    def _min_distance_stop_price(
+        self,
+        entry_mode: EntryMode,
+        entry_price: Decimal,
+        side: PositionSide,
+        symbol_meta: SymbolMeta,
+    ) -> Decimal | None:
+        if entry_mode != EntryMode.PRE_BREAKOUT_SCOUT:
+            return None
+        min_percent = Decimal(
+            str(self.cfg.entry.pre_breakout.min_stop_distance_percent)
+        )
+        if min_percent <= 0:
+            return None
+        offset = entry_price * min_percent / Decimal(100)
+        raw = (
+            entry_price - offset
+            if side == PositionSide.LONG
+            else entry_price + offset
+        )
+        return round_price_to_tick(raw, symbol_meta.tick_size)
 
     @staticmethod
     def _select_stop(
@@ -238,6 +266,8 @@ class RiskManager:
         return max(atr_stop, structure_stop)
 
     def _max_stop_distance_atr(self, entry_mode: EntryMode) -> Decimal:
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            return Decimal(str(self.cfg.risk.scout_max_stop_distance_atr))
         if entry_mode == EntryMode.RETEST_CONFIRM:
             limit = Decimal(str(self.cfg.risk.retest_max_stop_distance_atr))
             if self._structure_stop_enabled(entry_mode):
@@ -257,6 +287,8 @@ class RiskManager:
         atr: Decimal,
         atr_stop: Decimal,
         structure_stop: Decimal | None,
+        min_distance_stop: Decimal | None,
+        stop_before_min_distance: Decimal,
         selected_stop: Decimal,
         metadata: dict[str, object],
     ) -> dict[str, object]:
@@ -279,6 +311,19 @@ class RiskManager:
                 "structure_stop_price": str(structure_stop)
                 if structure_stop is not None
                 else None,
+                "min_stop_distance_percent": str(
+                    self.cfg.entry.pre_breakout.min_stop_distance_percent
+                )
+                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+                else None,
+                "min_distance_stop_price": str(min_distance_stop)
+                if min_distance_stop is not None
+                else None,
+                "min_distance_stop_applied": (
+                    selected_stop != stop_before_min_distance
+                    if min_distance_stop is not None
+                    else None
+                ),
                 "selected_stop_price": str(selected_stop),
                 "stop_distance_atr": str(stop_distance_atr),
                 "stop_distance_percent": str(stop_distance_percent),

@@ -31,6 +31,7 @@ def test_loads_repo_config():
     assert cfg.reconciliation.interval_sec_when_flat == 10
     assert cfg.api.app_env == "production"
     assert cfg.entry.pre_breakout.min_score == 6
+    assert cfg.entry.pre_breakout.min_stop_distance_percent == 0.30
     assert cfg.entry.pre_breakout.min_volume_ratio == 0.55
     assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.require_compression is False
@@ -44,9 +45,14 @@ def test_loads_repo_config():
     assert cfg.entry.pre_breakout.short_rsi_max == 58
     assert cfg.entry.retest_confirm.stop_atr == 1.3
     assert cfg.volatility_adaptive_stop.enabled is True
+    assert cfg.volatility_adaptive_stop.scout_atr_percent_tiers[0].stop_atr == 1.3
     assert cfg.volatility_adaptive_stop.retest_atr_percent_tiers[1].stop_atr == 1.3
     assert cfg.structure_stop.enabled is True
-    assert cfg.structure_stop.apply_to_entry_modes == ["RETEST_CONFIRM"]
+    assert cfg.structure_stop.apply_to_entry_modes == [
+        "PRE_BREAKOUT_SCOUT",
+        "RETEST_CONFIRM",
+    ]
+    assert cfg.structure_stop.use_structure_stop_for_scout is True
     assert cfg.position.scout_management.enabled is True
     assert cfg.position.scout_management.grace_bars == 6
     assert cfg.position.scout_management.min_hold_bars_before_defensive_reduce == 3
@@ -57,6 +63,7 @@ def test_loads_repo_config():
     assert cfg.position.runner_mode.strong_trend_trailing_atr == 2.8
     assert cfg.position.runner_mode.very_strong_trend_trailing_atr == 3.2
     assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
+    assert cfg.risk.scout_max_stop_distance_atr == 2.2
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
     assert cfg.funding_guard.block_new_entries_before_funding_min == 5

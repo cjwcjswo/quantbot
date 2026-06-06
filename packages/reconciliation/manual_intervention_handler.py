@@ -199,11 +199,7 @@ class ManualInterventionHandler:
         internal.status = PositionStatus.CLOSED
         internal.qty = Decimal("0")
         internal.closed_at = datetime.now(timezone.utc)
-        internal.exit_reason = (
-            ExitReason.RUNNER_TRAILING_STOP
-            if internal.runner_mode_active
-            else ExitReason.TRAILING_STOP
-        )
+        internal.exit_reason = self._exchange_protection_exit_reason(internal)
         if internal.runner_mode_active:
             await self._events.publish(
                 BotEvent(
@@ -243,3 +239,11 @@ class ManualInterventionHandler:
         )
         if self._logger is not None:
             await self._logger.log_position(internal, mode="LIVE")
+
+    @staticmethod
+    def _exchange_protection_exit_reason(internal: Position) -> ExitReason:
+        if internal.runner_mode_active:
+            return ExitReason.RUNNER_TRAILING_STOP
+        if internal.trailing_active:
+            return ExitReason.TRAILING_STOP
+        return ExitReason.STOP_LOSS

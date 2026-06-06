@@ -114,6 +114,7 @@ class PreBreakoutEntry(_Section):
     min_score: int = 6
     position_fraction: float = 0.30
     stop_atr: float = 0.7
+    min_stop_distance_percent: float = 0.30
     min_volume_ratio: float = 0.8
     max_distance_to_box_atr: float = 0.45
     require_compression: bool = False
@@ -178,6 +179,13 @@ class RetestAtrPercentTier(_Section):
 
 class VolatilityAdaptiveStopSection(_Section):
     enabled: bool = True
+    scout_atr_percent_tiers: list[RetestAtrPercentTier] = Field(
+        default_factory=lambda: [
+            RetestAtrPercentTier(max_atr_percent=0.25, stop_atr=1.3),
+            RetestAtrPercentTier(max_atr_percent=0.60, stop_atr=1.0),
+            RetestAtrPercentTier(max_atr_percent=999.0, stop_atr=0.8),
+        ]
+    )
     retest_atr_percent_tiers: list[RetestAtrPercentTier] = Field(
         default_factory=lambda: [
             RetestAtrPercentTier(max_atr_percent=0.25, stop_atr=1.0),
@@ -190,11 +198,12 @@ class VolatilityAdaptiveStopSection(_Section):
 class StructureStopSection(_Section):
     enabled: bool = True
     apply_to_entry_modes: list[str] = Field(
-        default_factory=lambda: ["RETEST_CONFIRM"]
+        default_factory=lambda: ["PRE_BREAKOUT_SCOUT", "RETEST_CONFIRM"]
     )
     buffer_atr: float = 0.10
     max_stop_distance_atr: float = 1.8
     min_stop_distance_atr: float = 0.5
+    use_structure_stop_for_scout: bool = True
     use_structure_stop_for_retest: bool = True
 
 
@@ -236,6 +245,7 @@ class RiskSection(_Section):
     daily_loss_max_leverage: int = 2
     min_stop_distance_atr: float = 0.5
     max_stop_distance_atr: float = 1.5
+    scout_max_stop_distance_atr: float = 2.2
     retest_max_stop_distance_atr: float = 1.8
     isolated_margin: bool = True
 

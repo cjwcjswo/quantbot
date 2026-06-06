@@ -87,6 +87,44 @@ def test_stop_too_wide(config):
     assert not d.approved and d.reason == "STOP_DISTANCE_TOO_WIDE"
 
 
+def test_scout_min_stop_distance_percent_widens_low_atr_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="0.7",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.25",
+        ),
+        atr="0.2",
+        entry="100",
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("99.7")
+    assert d.stop_metadata["atr_stop_price"] == "99.9"
+    assert d.stop_metadata["min_distance_stop_price"] == "99.7"
+    assert d.stop_metadata["min_distance_stop_applied"] is True
+    assert d.stop_metadata["stop_distance_percent"] == "0.300"
+
+
+def test_scout_structure_stop_can_widen_short_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.25",
+            direction=SignalDirection.SHORT,
+            structure_stop_price="101.8",
+        ),
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("101.8")
+    assert d.stop_metadata["structure_stop_price"] == "101.8"
+    assert d.stop_metadata["selected_stop_price"] == "101.8"
+
+
 def test_retest_uses_retest_max_stop_distance_guard(config):
     d = _approve(
         config,

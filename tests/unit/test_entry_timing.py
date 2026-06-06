@@ -4,7 +4,11 @@ from decimal import Decimal
 
 from packages.core.enums import EntryMode, SignalDirection
 from packages.entry import EntryTimingEngine
-from packages.entry.entry_timing_engine import EntryContext, resolve_retest_stop_atr
+from packages.entry.entry_timing_engine import (
+    EntryContext,
+    resolve_retest_stop_atr,
+    resolve_scout_stop_atr,
+)
 from tests.fakes.builders import candle
 from tests.fakes.builders import indicator_snapshot as snap
 
@@ -104,6 +108,24 @@ def test_retest_adaptive_stop_atr_tiers(config):
         Decimal(str(config.entry.retest_confirm.stop_atr)),
         config.volatility_adaptive_stop,
     ) == Decimal("1.5")
+
+
+def test_scout_adaptive_stop_atr_tiers(config):
+    assert resolve_scout_stop_atr(
+        Decimal("0.20"),
+        Decimal(str(config.entry.pre_breakout.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("1.3")
+    assert resolve_scout_stop_atr(
+        Decimal("0.41"),
+        Decimal(str(config.entry.pre_breakout.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("1.0")
+    assert resolve_scout_stop_atr(
+        Decimal("0.75"),
+        Decimal(str(config.entry.pre_breakout.stop_atr)),
+        config.volatility_adaptive_stop,
+    ) == Decimal("0.8")
 
 
 def test_retest_short_structure_stop_from_recent_high(config):
@@ -247,9 +269,10 @@ def test_scout_entry(config):
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
     assert decision.position_fraction == Decimal("0.25")
-    assert decision.stop_atr == Decimal("0.7")
+    assert decision.stop_atr == Decimal("0.8")
     assert decision.score >= Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
+    assert decision.stop_metadata["structure_stop_enabled"] is True
 
 
 def test_scout_with_compression_score_6_allowed(config):

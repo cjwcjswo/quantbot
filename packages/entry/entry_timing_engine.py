@@ -78,15 +78,52 @@ def resolve_retest_stop_atr(
     return resolved
 
 
+def resolve_scout_stop_atr(
+    atr_percent: Decimal,
+    default_stop_atr: Decimal,
+    adaptive_config,
+) -> Decimal:
+    resolved, _, _ = _resolve_scout_stop_atr_with_tier(
+        atr_percent, default_stop_atr, adaptive_config
+    )
+    return resolved
+
+
 def _resolve_retest_stop_atr_with_tier(
     atr_percent: Decimal,
     default_stop_atr: Decimal,
     adaptive_config,
 ) -> tuple[Decimal, str | None, bool]:
-    if not getattr(adaptive_config, "enabled", False):
+    return _resolve_stop_atr_with_tier(
+        atr_percent,
+        default_stop_atr,
+        getattr(adaptive_config, "enabled", False),
+        getattr(adaptive_config, "retest_atr_percent_tiers", None) or [],
+    )
+
+
+def _resolve_scout_stop_atr_with_tier(
+    atr_percent: Decimal,
+    default_stop_atr: Decimal,
+    adaptive_config,
+) -> tuple[Decimal, str | None, bool]:
+    return _resolve_stop_atr_with_tier(
+        atr_percent,
+        default_stop_atr,
+        getattr(adaptive_config, "enabled", False),
+        getattr(adaptive_config, "scout_atr_percent_tiers", None) or [],
+    )
+
+
+def _resolve_stop_atr_with_tier(
+    atr_percent: Decimal,
+    default_stop_atr: Decimal,
+    enabled: bool,
+    raw_tiers,
+) -> tuple[Decimal, str | None, bool]:
+    if not enabled:
         return default_stop_atr, None, False
 
-    raw_tiers = getattr(adaptive_config, "retest_atr_percent_tiers", None) or []
     tiers: list[tuple[Decimal, Decimal]] = []
     invalid = False
     for tier in raw_tiers:
@@ -368,9 +405,23 @@ class EntryTimingEngine:
         c = self.cfg.structure_stop
         if not c.enabled:
             return False
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT and not c.use_structure_stop_for_scout:
+            return False
         if entry_mode == EntryMode.RETEST_CONFIRM and not c.use_structure_stop_for_retest:
             return False
         return entry_mode.value in set(c.apply_to_entry_modes)
+
+    def _scout_swing_low(self, ctx: EntryContext) -> Decimal | None:
+        recent = ctx.candles_1m[-5:]
+        if recent:
+            return min(c.low for c in recent)
+        return ctx.snapshot_1m.swing_low
+
+    def _scout_swing_high(self, ctx: EntryContext) -> Decimal | None:
+        recent = ctx.candles_1m[-5:]
+        if recent:
+            return max(c.high for c in recent)
+        return ctx.snapshot_1m.swing_high
 
     def _retest_swing_low(self, ctx: EntryContext) -> Decimal | None:
         recent = ctx.candles_1m[-5:]
@@ -430,14 +481,67 @@ class EntryTimingEngine:
             )
             return None
         e = self.cfg.entry.pre_breakout
+        default_stop_atr = Decimal(str(e.stop_atr or 0.7))
+        atr_percent = self._atr_percent_1m(ctx, last, atr1)
+        resolved_stop_atr, tier, adaptive_invalid = _resolve_scout_stop_atr_with_tier(
+            atr_percent,
+            default_stop_atr,
+            self.cfg.volatility_adaptive_stop,
+        )
+        structure_enabled = self._structure_stop_enabled(EntryMode.PRE_BREAKOUT_SCOUT)
+        swing_low: Decimal | None = None
+        swing_high: Decimal | None = None
+        structure_stop_price: Decimal | None = None
+        structure_unavailable = False
+
+        if structure_enabled:
+            buffer_atr = Decimal(str(self.cfg.structure_stop.buffer_atr))
+            if ctx.direction == SignalDirection.LONG:
+                swing_low = self._scout_swing_low(ctx)
+                if swing_low is not None:
+                    structure_stop_price = swing_low - atr1 * buffer_atr
+                else:
+                    structure_unavailable = True
+            else:
+                swing_high = self._scout_swing_high(ctx)
+                if swing_high is not None:
+                    structure_stop_price = swing_high + atr1 * buffer_atr
+                else:
+                    structure_unavailable = True
+
+        stop_metadata = {
+            "entry_mode": EntryMode.PRE_BREAKOUT_SCOUT.value,
+            "symbol": ctx.symbol,
+            "side": ctx.direction.value,
+            "atr_percent_1m": str(atr_percent),
+            "default_stop_atr": str(default_stop_atr),
+            "resolved_stop_atr": str(resolved_stop_atr),
+            "adaptive_stop_enabled": self.cfg.volatility_adaptive_stop.enabled,
+            "adaptive_stop_tier": tier,
+            "adaptive_stop_config_invalid": adaptive_invalid or None,
+            "adaptive_stop_warning": "ADAPTIVE_STOP_CONFIG_INVALID"
+            if adaptive_invalid
+            else None,
+            "structure_stop_enabled": structure_enabled,
+            "structure_stop_price": str(structure_stop_price)
+            if structure_stop_price is not None
+            else None,
+            "scout_swing_low": str(swing_low) if swing_low is not None else None,
+            "scout_swing_high": str(swing_high) if swing_high is not None else None,
+            "structure_stop_warning": "STRUCTURE_STOP_UNAVAILABLE"
+            if structure_unavailable
+            else None,
+        }
         return EntryDecision(
             symbol=ctx.symbol,
             direction=ctx.direction,
             entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
             position_fraction=position_fraction,
-            stop_atr=Decimal(str(e.stop_atr)),
+            stop_atr=resolved_stop_atr,
             score=score,
             reason=f"pre-breakout scout {compression.mode.lower()}",
+            structure_stop_price=structure_stop_price,
+            stop_metadata={k: v for k, v in stop_metadata.items() if v is not None},
             compression_mode=compression.mode,
             has_compression=compression.has_compression,
             required_score=required_score,

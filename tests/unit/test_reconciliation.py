@@ -5,6 +5,7 @@ from decimal import Decimal
 from apps.bot.runtime.runtime_state import RuntimeState
 from packages.core.enums import (
     EntryMode,
+    ExitReason,
     PositionSide,
     PositionSource,
     PositionStatus,
@@ -242,6 +243,22 @@ async def test_bot_exchange_protection_order_not_flagged_external(config, events
     assert result.external_orders == []
     assert state.external_orders == {}
     assert not state.new_entries_paused()
+
+
+async def test_bot_exchange_initial_sl_close_marked_stop_loss(config, events):
+    state, _gw, recon = _make(config, events)
+    pos = _bot_position()
+    pos.stop_loss_price = Decimal("99")
+    pos.trailing_active = False
+    state.positions[pos.symbol] = pos
+
+    result = await recon.reconcile_once()
+
+    assert pos.status == PositionStatus.CLOSED
+    assert pos.exit_reason == ExitReason.STOP_LOSS
+    assert pos.symbol in result.exchange_closes
+    closed = events.of_type(BotEventType.POSITION_CLOSED)[-1]
+    assert closed.data["reason"] == "STOP_LOSS"
 
 
 async def test_known_order_not_flagged_external(config, events):

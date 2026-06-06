@@ -733,7 +733,7 @@ class TradingService:
             "mode": decision.entry_mode.value,
             "position_fraction": str(decision.position_fraction),
         }
-        if decision.entry_mode == EntryMode.RETEST_CONFIRM and rd.stop_metadata:
+        if rd.stop_metadata:
             opened_data.update(rd.stop_metadata)
         if decision.compression_mode is not None:
             opened_data.update(
