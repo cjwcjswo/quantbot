@@ -334,9 +334,9 @@ api:
 
 funding_guard:
   enabled: true
-  block_new_entries_before_funding_min: 10
-  block_if_abs_funding_rate_percent_above: 0.05
-  reduce_position_if_abs_funding_rate_percent_above: 0.10
+  block_new_entries_before_funding_min: 5
+  block_if_abs_funding_rate_percent_above: 0.08
+  reduce_position_if_abs_funding_rate_percent_above: 0.12
 
 symbol_status:
   refresh_interval_sec: 300

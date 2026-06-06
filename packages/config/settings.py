@@ -419,9 +419,9 @@ class ApiSection(_Section):
 
 class FundingGuardSection(_Section):
     enabled: bool = True
-    block_new_entries_before_funding_min: int = 10
-    block_if_abs_funding_rate_percent_above: float = 0.05
-    reduce_position_if_abs_funding_rate_percent_above: float = 0.10
+    block_new_entries_before_funding_min: int = 5
+    block_if_abs_funding_rate_percent_above: float = 0.08
+    reduce_position_if_abs_funding_rate_percent_above: float = 0.12
 
 
 class SymbolStatusSection(_Section):

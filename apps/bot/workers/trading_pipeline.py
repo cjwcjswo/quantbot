@@ -445,7 +445,11 @@ class TradingService:
     # guard gates
     # ------------------------------------------------------------------ #
     def _pre_gate(
-        self, symbol: str, snapshot_1m: IndicatorSnapshot, market: MarketContext | None
+        self,
+        symbol: str,
+        direction: SignalDirection,
+        snapshot_1m: IndicatorSnapshot,
+        market: MarketContext | None,
     ) -> str | None:
         g = self._guards
         if g.state_machine is not None and not g.state_machine.can_enter_new_position():
@@ -478,6 +482,7 @@ class TradingService:
                     now_ms=market.now_ms,
                     next_funding_time_ms=market.next_funding_time_ms,
                     funding_rate=market.funding_rate,
+                    direction=direction,
                 )
                 if reason:
                     return f"FUNDING:{reason}"
@@ -532,7 +537,7 @@ class TradingService:
             return None
         sig = signals[0]
 
-        blocked = self._pre_gate(symbol, snapshots["1"], market)
+        blocked = self._pre_gate(symbol, sig.direction, snapshots["1"], market)
         if blocked is not None:
             await self._emit_no_entry(
                 symbol=symbol,
@@ -863,7 +868,7 @@ class TradingService:
         actions = []
         if (
             self._guards.funding_guard is not None
-            and self._guards.funding_guard.should_reduce_position(funding_rate)
+            and self._guards.funding_guard.should_reduce_position(funding_rate, pos.side)
         ):
             qty = pos.qty * Decimal("0.5")
             await self._close(

@@ -59,6 +59,9 @@ def test_loads_repo_config():
     assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
+    assert cfg.funding_guard.block_new_entries_before_funding_min == 5
+    assert cfg.funding_guard.block_if_abs_funding_rate_percent_above == 0.08
+    assert cfg.funding_guard.reduce_position_if_abs_funding_rate_percent_above == 0.12
 
 
 def test_defaults_when_empty(tmp_path):
