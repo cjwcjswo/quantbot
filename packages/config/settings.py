@@ -272,6 +272,8 @@ class ScoutManagementSection(_Section):
     grace_bars: int = 6
     confirmation_boundary_atr: float = 0.03
     confirmation_volume_ratio: float = 1.1
+    min_hold_bars_before_defensive_reduce: int = 3
+    warning_confirm_bars: int = 2
     max_defensive_reductions: int = 1
     defensive_reduce_fraction: float = 0.50
     invalidate_on_box_mid_reclaim: bool = True
@@ -280,6 +282,9 @@ class ScoutManagementSection(_Section):
     short_invalid_rsi_threshold: float = 55
     strong_opposite_candle_body_ratio: float = 0.55
     strong_opposite_candle_volume_ratio: float = 1.5
+    catastrophic_opposite_candle_body_ratio: float = 0.75
+    catastrophic_opposite_candle_volume_ratio: float = 3.0
+    catastrophic_opposite_move_atr: float = 1.2
     convert_to_active_on_confirmation: bool = True
 
 

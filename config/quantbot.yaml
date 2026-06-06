@@ -221,6 +221,8 @@ position:
     grace_bars: 6
     confirmation_boundary_atr: 0.03
     confirmation_volume_ratio: 1.1
+    min_hold_bars_before_defensive_reduce: 3
+    warning_confirm_bars: 2
     max_defensive_reductions: 1
     defensive_reduce_fraction: 0.50
     invalidate_on_box_mid_reclaim: true
@@ -229,6 +231,9 @@ position:
     short_invalid_rsi_threshold: 55
     strong_opposite_candle_body_ratio: 0.55
     strong_opposite_candle_volume_ratio: 1.5
+    catastrophic_opposite_candle_body_ratio: 0.75
+    catastrophic_opposite_candle_volume_ratio: 3.0
+    catastrophic_opposite_move_atr: 1.2
     convert_to_active_on_confirmation: true
 
 stagnation_exit:

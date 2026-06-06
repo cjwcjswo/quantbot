@@ -224,6 +224,102 @@ def test_scout_pending_defensive_reduce_only_once(config):
     assert all(a.type != PositionActionType.REDUCE for a in second)
 
 
+def test_home_like_long_scout_strong_candle_starts_warning_without_reduce(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=0)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("99.117"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99.9039", h="100", l="99", c="99.117"),
+        volume_ratio=Decimal("2.02"),
+    )
+
+    assert [a.type for a in actions] == [PositionActionType.SCOUT_EVENT]
+    assert actions[0].event_type == "SCOUT_WARNING_STARTED"
+    assert actions[0].data["reason"] == "STRONG_BEARISH_CANDLE"
+    assert actions[0].data["opposite_move_atr"] == "0.7869"
+    assert pos.scout_state == ScoutState.SCOUT_WARNING
+    assert pos.scout_warning_started_at_bar == 1
+    assert pos.scout_defensive_reduction_count == 0
+
+
+def test_scout_warning_recovers_without_reduce(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=1)
+    pos.scout_state = ScoutState.SCOUT_WARNING
+    pos.scout_warning_started_at_bar = 1
+    pos.scout_warning_reason = "STRONG_BEARISH_CANDLE"
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("100.2"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99.8", h="100.4", l="99.7", c="100.2"),
+    )
+
+    assert [a.type for a in actions] == [PositionActionType.SCOUT_EVENT]
+    assert actions[0].event_type == "SCOUT_WARNING_RECOVERED"
+    assert pos.scout_state == ScoutState.SCOUT_PENDING
+    assert pos.scout_warning_started_at_bar is None
+    assert pos.scout_defensive_reduction_count == 0
+
+
+def test_scout_warning_failed_after_confirm_bars_reduces_once(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=2)
+    pos.scout_state = ScoutState.SCOUT_WARNING
+    pos.scout_warning_started_at_bar = 1
+    pos.scout_warning_reason = "STRONG_BEARISH_CANDLE"
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("99.1"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99.6", h="99.8", l="99.0", c="99.1"),
+    )
+
+    assert [a.type for a in actions] == [PositionActionType.REDUCE]
+    assert actions[0].qty == Decimal("5.0")
+    assert actions[0].event_type == "SCOUT_DEFENSIVE_REDUCE"
+    assert actions[0].reason == ExitReason.SCOUT_DEFENSIVE_REDUCE
+    assert actions[0].data["warning_bars"] == 2
+    assert pos.scout_state == ScoutState.SCOUT_PENDING
+    assert pos.scout_warning_started_at_bar is None
+    assert pos.scout_defensive_reduction_count == 1
+
+    second = pm.evaluate(
+        pos,
+        price=Decimal("99.1"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99.6", h="99.8", l="99.0", c="99.1"),
+        volume_ratio=Decimal("2"),
+    )
+    assert all(a.type != PositionActionType.REDUCE for a in second)
+
+
+def test_scout_catastrophic_candle_reduces_immediately(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=0)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("99.1"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="100.6", h="101", l="99", c="99.1"),
+        volume_ratio=Decimal("3.1"),
+    )
+
+    assert [a.type for a in actions] == [PositionActionType.REDUCE]
+    assert actions[0].qty == Decimal("5.0")
+    assert actions[0].event_type == "SCOUT_CATASTROPHIC_REDUCE"
+    assert actions[0].reason == ExitReason.SCOUT_CATASTROPHIC_REDUCE
+    assert actions[0].data["reason"] == "CATASTROPHIC_BEARISH_CANDLE"
+    assert actions[0].data["opposite_move_atr"] == "1.5"
+    assert pos.scout_defensive_reduction_count == 1
+
+
 def test_scout_defensive_reduce_does_not_stack_with_stagnation(config):
     pm = PositionManager(config)
     pos = _scout_pos(side=PositionSide.SHORT, bars=7)

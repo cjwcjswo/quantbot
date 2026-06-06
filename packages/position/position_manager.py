@@ -194,14 +194,19 @@ class PositionManager:
                         candle,
                         snapshot_1m=snapshot_1m,
                         volume_ratio=volume_ratio,
+                        atr=atr,
                     )
                 ], True
             return [], False
 
-        if position.scout_state != ScoutState.SCOUT_PENDING:
+        if position.scout_state not in {
+            ScoutState.SCOUT_PENDING,
+            ScoutState.SCOUT_WARNING,
+        }:
             return [], True
 
         if self._scout_confirmed(position, atr, candle, volume_ratio):
+            self._clear_scout_warning(position)
             position.scout_state = ScoutState.SCOUT_CONFIRMED
             position.scout_confirmed_at = now
             events = [
@@ -212,6 +217,7 @@ class PositionManager:
                     candle,
                     snapshot_1m=snapshot_1m,
                     volume_ratio=volume_ratio,
+                    atr=atr,
                 )
             ]
             if c.convert_to_active_on_confirmation:
@@ -224,20 +230,104 @@ class PositionManager:
                         candle,
                         snapshot_1m=snapshot_1m,
                         volume_ratio=volume_ratio,
+                        atr=atr,
                     )
                 )
                 return events, True
             return events, False
 
         bars_since_scout = self._scout_bars_since_entry(position)
+        catastrophic_reason = self._scout_catastrophic_opposite_reason(
+            position, candle, volume_ratio, atr
+        )
+        if (
+            catastrophic_reason is not None
+            and position.scout_defensive_reduction_count
+            < c.max_defensive_reductions
+        ):
+            return [
+                self._scout_reduce_action(
+                    position,
+                    price,
+                    candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                    atr=atr,
+                    reason=catastrophic_reason,
+                    exit_reason=ExitReason.SCOUT_CATASTROPHIC_REDUCE,
+                    event_type="SCOUT_CATASTROPHIC_REDUCE",
+                )
+            ], False
+
+        if position.scout_state == ScoutState.SCOUT_WARNING:
+            if self._scout_warning_recovered(position, candle, snapshot_1m):
+                event = self._scout_event(
+                    position,
+                    "SCOUT_WARNING_RECOVERED",
+                    price,
+                    candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                    atr=atr,
+                    reason=position.scout_warning_reason
+                    or "SCOUT_WARNING_RECOVERED",
+                )
+                self._clear_scout_warning(position)
+                position.scout_state = ScoutState.SCOUT_PENDING
+                return [event], False
+
+            if self._scout_warning_bars(position) < c.warning_confirm_bars:
+                return [], False
+            if bars_since_scout < c.min_hold_bars_before_defensive_reduce:
+                return [], False
+            if (
+                position.scout_defensive_reduction_count
+                < c.max_defensive_reductions
+            ):
+                return [
+                    self._scout_reduce_action(
+                        position,
+                        price,
+                        candle,
+                        snapshot_1m=snapshot_1m,
+                        volume_ratio=volume_ratio,
+                        atr=atr,
+                        reason=position.scout_warning_reason
+                        or "SCOUT_WARNING_NOT_RECOVERED",
+                        exit_reason=ExitReason.SCOUT_DEFENSIVE_REDUCE,
+                        event_type="SCOUT_DEFENSIVE_REDUCE",
+                    )
+                ], False
+            self._clear_scout_warning(position)
+            position.scout_state = ScoutState.SCOUT_PENDING
+
         strong_reason = self._scout_strong_opposite_reason(
             position, candle, volume_ratio
         )
+        if (
+            strong_reason is not None
+            and position.scout_defensive_reduction_count
+            < c.max_defensive_reductions
+        ):
+            position.scout_state = ScoutState.SCOUT_WARNING
+            position.scout_warning_started_at_bar = bars_since_scout
+            position.scout_warning_reason = strong_reason
+            return [
+                self._scout_event(
+                    position,
+                    "SCOUT_WARNING_STARTED",
+                    price,
+                    candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                    atr=atr,
+                    reason=strong_reason,
+                )
+            ], False
+
         in_grace = bars_since_scout < c.grace_bars
         weakness_reason = (
-            strong_reason
-            if strong_reason is not None
-            else None
+            None
             if in_grace
             else self._scout_weakness_reason(
                 position, candle, snapshot_1m, volume_ratio
@@ -249,24 +339,17 @@ class PositionManager:
             and position.scout_defensive_reduction_count
             < c.max_defensive_reductions
         ):
-            position.scout_defensive_reduction_count += 1
-            qty = self._round_qty(
-                position.qty * Decimal(str(c.defensive_reduce_fraction))
-            )
             return [
-                PositionAction(
-                    type=PositionActionType.REDUCE,
-                    qty=qty,
-                    reason=ExitReason.SCOUT_DEFENSIVE_REDUCE,
+                self._scout_reduce_action(
+                    position,
+                    price,
+                    candle,
+                    snapshot_1m=snapshot_1m,
+                    volume_ratio=volume_ratio,
+                    atr=atr,
+                    reason=weakness_reason,
+                    exit_reason=ExitReason.SCOUT_DEFENSIVE_REDUCE,
                     event_type="SCOUT_DEFENSIVE_REDUCE",
-                    data=self._scout_event_data(
-                        position,
-                        price,
-                        candle,
-                        snapshot_1m=snapshot_1m,
-                        volume_ratio=volume_ratio,
-                        reason=weakness_reason,
-                    ),
                 )
             ], False
 
@@ -277,6 +360,7 @@ class PositionManager:
                     position, "SCOUT_INVALIDATED", price, candle,
                     snapshot_1m=snapshot_1m,
                     volume_ratio=volume_ratio,
+                    atr=atr,
                     reason=stagnation.reason.value if stagnation.reason else "STAGNATION",
                 ),
                 stagnation,
@@ -399,11 +483,131 @@ class PositionManager:
             return "STRONG_BULLISH_CANDLE"
         return None
 
+    def _scout_catastrophic_opposite_reason(
+        self,
+        position: Position,
+        candle: Candle,
+        volume_ratio: Decimal | None,
+        atr: Decimal,
+    ) -> str | None:
+        if volume_ratio is None or atr <= 0:
+            return None
+        c = self.cfg.position.scout_management
+        m = metrics_of(candle)
+        if not m.valid:
+            return None
+        opposite_move_atr = self._scout_opposite_move_atr(position, candle, atr)
+        if (
+            opposite_move_atr is None
+            or m.body_ratio < Decimal(str(c.catastrophic_opposite_candle_body_ratio))
+            or volume_ratio < Decimal(str(c.catastrophic_opposite_candle_volume_ratio))
+            or opposite_move_atr < Decimal(str(c.catastrophic_opposite_move_atr))
+        ):
+            return None
+        if (
+            position.side == PositionSide.LONG
+            and candle.close < candle.open
+            and m.close_position_in_range <= Decimal("0.20")
+        ):
+            return "CATASTROPHIC_BEARISH_CANDLE"
+        if (
+            position.side == PositionSide.SHORT
+            and candle.close > candle.open
+            and m.close_position_in_range >= Decimal("0.80")
+        ):
+            return "CATASTROPHIC_BULLISH_CANDLE"
+        return None
+
+    def _scout_warning_recovered(
+        self,
+        position: Position,
+        candle: Candle,
+        snapshot_1m: IndicatorSnapshot | None,
+    ) -> bool:
+        m = metrics_of(candle)
+        if not m.valid:
+            return False
+        ema20 = snapshot_1m.ema20 if snapshot_1m is not None else None
+        if position.side == PositionSide.LONG:
+            return (
+                candle.close >= position.avg_entry_price
+                or (ema20 is not None and candle.close >= ema20)
+                or m.close_position_in_range >= Decimal("0.50")
+            )
+        return (
+            candle.close <= position.avg_entry_price
+            or (ema20 is not None and candle.close <= ema20)
+            or m.close_position_in_range <= Decimal("0.50")
+        )
+
     def _scout_bars_since_entry(self, position: Position) -> int:
         start = position.scout_entry_bar_index
         if start is None:
             return position.bars_since_entry
         return max(0, position.bars_since_entry - start)
+
+    def _scout_warning_bars(self, position: Position) -> int:
+        started = position.scout_warning_started_at_bar
+        if started is None:
+            return 0
+        return max(0, self._scout_bars_since_entry(position) - started)
+
+    @staticmethod
+    def _clear_scout_warning(position: Position) -> None:
+        position.scout_warning_started_at_bar = None
+        position.scout_warning_reason = None
+
+    def _scout_reduce_action(
+        self,
+        position: Position,
+        price: Decimal,
+        candle: Candle,
+        *,
+        snapshot_1m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+        atr: Decimal,
+        reason: str,
+        exit_reason: ExitReason,
+        event_type: str,
+    ) -> PositionAction:
+        c = self.cfg.position.scout_management
+        position.scout_defensive_reduction_count += 1
+        qty = self._round_qty(
+            position.qty * Decimal(str(c.defensive_reduce_fraction))
+        )
+        data = self._scout_event_data(
+            position,
+            price,
+            candle,
+            snapshot_1m=snapshot_1m,
+            volume_ratio=volume_ratio,
+            atr=atr,
+            reason=reason,
+        )
+        self._clear_scout_warning(position)
+        position.scout_state = ScoutState.SCOUT_PENDING
+        data["scout_state"] = position.scout_state.value
+        return PositionAction(
+            type=PositionActionType.REDUCE,
+            qty=qty,
+            reason=exit_reason,
+            event_type=event_type,
+            data=data,
+        )
+
+    def _scout_opposite_move_atr(
+        self,
+        position: Position,
+        candle: Candle,
+        atr: Decimal | None,
+    ) -> Decimal | None:
+        if atr is None or atr <= 0:
+            return None
+        if position.side == PositionSide.LONG and candle.close < candle.open:
+            return (candle.open - candle.close) / atr
+        if position.side == PositionSide.SHORT and candle.close > candle.open:
+            return (candle.close - candle.open) / atr
+        return Decimal(0)
 
     def _scout_event(
         self,
@@ -414,6 +618,7 @@ class PositionManager:
         *,
         snapshot_1m: IndicatorSnapshot | None = None,
         volume_ratio: Decimal | None = None,
+        atr: Decimal | None = None,
         reason: str | None = None,
     ) -> PositionAction:
         return PositionAction(
@@ -425,6 +630,7 @@ class PositionManager:
                 candle,
                 snapshot_1m=snapshot_1m,
                 volume_ratio=volume_ratio,
+                atr=atr,
                 reason=reason,
             ),
         )
@@ -437,9 +643,11 @@ class PositionManager:
         *,
         snapshot_1m: IndicatorSnapshot | None = None,
         volume_ratio: Decimal | None = None,
+        atr: Decimal | None = None,
         reason: str | None = None,
     ) -> dict:
         m = metrics_of(candle)
+        opposite_move_atr = self._scout_opposite_move_atr(position, candle, atr)
         return {
             "symbol": position.symbol,
             "side": position.side.value,
@@ -447,6 +655,7 @@ class PositionManager:
             "current_price": str(price),
             "scout_state": position.scout_state.value,
             "bars_since_entry": self._scout_bars_since_entry(position),
+            "warning_bars": self._scout_warning_bars(position),
             "box_high": str(position.scout_entry_box_high)
             if position.scout_entry_box_high is not None
             else None,
@@ -471,6 +680,9 @@ class PositionManager:
             "body_ratio": str(m.body_ratio) if m.valid else None,
             "close_position_in_range": str(m.close_position_in_range)
             if m.valid
+            else None,
+            "opposite_move_atr": str(opposite_move_atr)
+            if opposite_move_atr is not None
             else None,
         }
 

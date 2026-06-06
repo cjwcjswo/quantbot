@@ -143,6 +143,8 @@ class Position(_Mut):
     scout_entry_box_mid: Decimal | None = None
     scout_entry_level: Decimal | None = None
     scout_entry_bar_index: int | None = None
+    scout_warning_started_at_bar: int | None = None
+    scout_warning_reason: str | None = None
     scout_defensive_reduction_count: int = 0
     scout_confirmed_at: datetime | None = None
 

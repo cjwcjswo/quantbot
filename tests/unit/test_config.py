@@ -42,7 +42,10 @@ def test_loads_repo_config():
     assert cfg.structure_stop.apply_to_entry_modes == ["RETEST_CONFIRM"]
     assert cfg.position.scout_management.enabled is True
     assert cfg.position.scout_management.grace_bars == 6
+    assert cfg.position.scout_management.min_hold_bars_before_defensive_reduce == 3
+    assert cfg.position.scout_management.warning_confirm_bars == 2
     assert cfg.position.scout_management.max_defensive_reductions == 1
+    assert cfg.position.scout_management.catastrophic_opposite_candle_volume_ratio == 3.0
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
 
