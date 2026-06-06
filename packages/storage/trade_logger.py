@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from packages.core.enums import PositionStatus
+from packages.core.enums import OrderStatus, PositionStatus
 from packages.core.events import BotEvent, event_severity, should_persist_event
 from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
@@ -253,6 +253,32 @@ class TradeLogger:
                         if position.exit_reason
                         else None,
                         closed_at=position.closed_at,
+                    )
+                )
+                order_filters = [
+                    OrderRow.symbol == position.symbol,
+                    OrderRow.reduce_only.is_(True),
+                    OrderRow.status.in_(
+                        (
+                            OrderStatus.NEW.value,
+                            OrderStatus.PARTIALLY_FILLED.value,
+                        )
+                    ),
+                ]
+                if mode is not None:
+                    order_filters.append(OrderRow.mode == mode)
+                if position.source.value == "BOT":
+                    order_filters.append(
+                        or_(OrderRow.source == "BOT", OrderRow.source.is_(None))
+                    )
+                else:
+                    order_filters.append(OrderRow.source == position.source.value)
+                await session.execute(
+                    update(OrderRow)
+                    .where(*order_filters)
+                    .values(
+                        status=OrderStatus.CANCELLED.value,
+                        updated_at=_utcnow(),
                     )
                 )
             session.add(row)

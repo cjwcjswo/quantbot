@@ -6,17 +6,20 @@ from sqlalchemy import func, select
 
 from packages.core.enums import (
     EntryMode,
+    OrderStatus,
+    OrderType,
     PositionSide,
     PositionStatus,
     Side,
     SignalDirection,
 )
 from packages.core.events import BotEvent, BotEventType
-from packages.core.models import Fill, Position, Signal
+from packages.core.models import Fill, Order, Position, Signal
 from packages.storage import (
     BotEventRow,
     CommandLogRow,
     FillRow,
+    OrderRow,
     PositionRow,
     SignalRow,
     TradeRow,
@@ -106,6 +109,20 @@ async def test_log_fill_and_position(session_factory):
 
 async def test_log_closed_position_closes_previous_open_snapshots(session_factory):
     tl = TradeLogger(session_factory)
+    await tl.log_order(
+        Order(
+            symbol="BTCUSDT",
+            side=Side.SELL,
+            order_type=OrderType.LIMIT,
+            qty=Decimal("1"),
+            price=Decimal("99"),
+            status=OrderStatus.NEW,
+            client_order_id="sl-1",
+            reduce_only=True,
+        ),
+        mode="LIVE",
+        source="BOT",
+    )
     pos = Position(
         symbol="BTCUSDT",
         side=PositionSide.LONG,
@@ -125,10 +142,16 @@ async def test_log_closed_position_closes_previous_open_snapshots(session_factor
         rows = (await s.execute(
             select(PositionRow).where(PositionRow.symbol == "BTCUSDT")
         )).scalars().all()
+        order = (
+            await s.execute(
+                select(OrderRow).where(OrderRow.client_order_id == "sl-1")
+            )
+        ).scalar_one()
 
     assert len(rows) == 3
     assert {row.status for row in rows} == {"CLOSED"}
     assert {row.qty for row in rows} == {"0"}
+    assert order.status == "CANCELLED"
 
 
 async def test_log_trade_truncates_long_r_multiple(session_factory):
