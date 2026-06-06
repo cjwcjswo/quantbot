@@ -74,6 +74,8 @@ async def monthly_pnl(session_factory: Any, *, limit: int = 24) -> list[dict]:
             },
         )
         bucket["days"] += 1
+        if bucket.get("start_equity") is None and row.get("start_equity"):
+            bucket["start_equity"] = row.get("start_equity")
         bucket["end_equity"] = row.get("current_equity") or row.get("equity")
         bucket["net_pnl"] += net
         bucket["max_drawdown_percent"] = max(

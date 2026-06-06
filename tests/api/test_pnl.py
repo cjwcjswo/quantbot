@@ -146,8 +146,15 @@ async def test_daily_list_prefers_equity_baseline_rows(client, session_factory):
 async def test_monthly_pnl(client, session_factory):
     await add_rows(
         session_factory,
-        DailyAccountEquityRow(
+        DailyPnlRow(
             day="2026-06-01",
+            realized="6",
+            unrealized="0",
+            fees="1",
+            net="5",
+        ),
+        DailyAccountEquityRow(
+            day="2026-06-02",
             mode="LIVE",
             start_equity="10000",
             current_equity="10020",
@@ -157,7 +164,7 @@ async def test_monthly_pnl(client, session_factory):
             max_drawdown_percent="0",
         ),
         DailyAccountEquityRow(
-            day="2026-06-02",
+            day="2026-06-03",
             mode="LIVE",
             start_equity="10020",
             current_equity="10050",
@@ -169,4 +176,5 @@ async def test_monthly_pnl(client, session_factory):
     )
     data = (await client.get("/pnl/monthly")).json()["data"]
     assert data["monthly"][0]["month"] == "2026-06"
-    assert data["monthly"][0]["net_pnl"] == "50.00"
+    assert data["monthly"][0]["start_equity"] == "10000"
+    assert data["monthly"][0]["net_pnl"] == "55.00"
