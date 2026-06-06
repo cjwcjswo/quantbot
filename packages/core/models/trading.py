@@ -143,6 +143,7 @@ class Position(_Mut):
     last_runner_trailing_stop: Decimal | None = None
     runner_exchange_sl_update_failures: int = 0
     bars_since_entry: int = 0
+    last_evaluated_1m_open_time_ms: int | None = None
     breakout_level: Decimal | None = None
     scout_state: ScoutState = ScoutState.NONE
     scout_entry_box_high: Decimal | None = None

@@ -334,6 +334,53 @@ def test_scout_defensive_reduce_does_not_stack_with_stagnation(config):
     assert [a.type for a in actions] == [PositionActionType.REDUCE]
 
 
+def test_scout_stagnation_counts_unique_1m_candles_not_evaluations(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=0)
+    pos.avg_entry_price = Decimal("101.8")
+    pos.stop_loss_price = Decimal("101")
+    pos.take_profit_price = Decimal("103.4")
+
+    same_bar = candle(
+        open_time_ms=60_000,
+        o="101.5",
+        h="101.7",
+        l="101.4",
+        c="101.6",
+    )
+    for _ in range(8):
+        actions = pm.evaluate(
+            pos,
+            price=Decimal("101.6"),
+            atr=Decimal("1"),
+            candle_1m=same_bar,
+            volume_ratio=Decimal("0.5"),
+        )
+        assert all(a.reason != ExitReason.STAGNATION for a in actions)
+
+    assert pos.bars_since_entry == 1
+
+    last_actions = []
+    for i in range(2, 9):
+        last_actions = pm.evaluate(
+            pos,
+            price=Decimal("101.6"),
+            atr=Decimal("1"),
+            candle_1m=candle(
+                open_time_ms=i * 60_000,
+                o="101.5",
+                h="101.7",
+                l="101.4",
+                c="101.6",
+            ),
+            volume_ratio=Decimal("0.5"),
+        )
+
+    assert pos.bars_since_entry == 8
+    assert last_actions[-1].type == PositionActionType.EXIT
+    assert last_actions[-1].reason == ExitReason.STAGNATION
+
+
 def test_active_trend_scout_uses_general_scenario_invalid(config):
     pm = PositionManager(config)
     pos = _scout_pos(side=PositionSide.SHORT, bars=3)

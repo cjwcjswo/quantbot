@@ -92,7 +92,7 @@ class PositionManager:
             return []
 
         now = now or datetime.now(timezone.utc)
-        position.bars_since_entry += 1
+        self._advance_bar_counter(position, candle_1m)
         self._update_extremes(position, price, candle_1m)
         r = self.r_multiple(position, price)
         max_r = max(self._max_r.get(position.symbol, Decimal(0)), r)
@@ -231,6 +231,18 @@ class PositionManager:
                     PositionAction(type=PositionActionType.TRAIL_UPDATE, new_stop=new_stop)
                 )
         return actions
+
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _advance_bar_counter(position: Position, candle: Candle | None) -> None:
+        if candle is None or candle.open_time_ms <= 0:
+            position.bars_since_entry += 1
+            return
+        last_open_time = position.last_evaluated_1m_open_time_ms
+        if last_open_time == candle.open_time_ms:
+            return
+        position.last_evaluated_1m_open_time_ms = candle.open_time_ms
+        position.bars_since_entry += 1
 
     # ------------------------------------------------------------------ #
     # Runner Mode after partial TP
