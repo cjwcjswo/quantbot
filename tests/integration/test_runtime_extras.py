@@ -13,6 +13,7 @@ from packages.guards import ClockSyncGuard
 from packages.reconciliation.reconciliation_manager import ReconcileResult
 from packages.storage import (
     DailyPnlRow,
+    DailyAccountEquityRow,
     PaperAccountSnapshotRow,
     ReconciliationLogRow,
     TradeLogger,
@@ -63,11 +64,33 @@ async def test_pnl_persisted(redis, session_factory):
     await rt.startup()
     await rt._publish_and_persist_pnl()
     assert await _count(session_factory, DailyPnlRow) == 1
+    assert await _count(session_factory, DailyAccountEquityRow) == 1
     # PAPER mode also snapshots the virtual account
     assert await _count(session_factory, PaperAccountSnapshotRow) == 1
     # bot:pnl key published
-    assert await redis.get("bot:pnl") is not None
+    import json
+    pnl = json.loads(await redis.get("bot:pnl"))
+    assert pnl["start_equity"] == "10000"
+    assert pnl["daily_net_pnl"] == "0"
     await rt.shutdown()
+
+
+async def test_daily_equity_baseline_survives_restart(redis, session_factory):
+    rt = _runtime(redis, session_factory, gateway=FakeGateway(equity=Decimal("10000")),
+                  mode=BotMode.LIVE)
+    await rt.startup()
+    await rt._publish_and_persist_pnl()
+    await rt.shutdown()
+
+    rt2 = _runtime(redis, session_factory, gateway=FakeGateway(equity=Decimal("10050")),
+                   mode=BotMode.LIVE)
+    await rt2.startup()
+    await rt2._publish_and_persist_pnl()
+    import json
+    pnl = json.loads(await redis.get("bot:pnl"))
+    assert pnl["start_equity"] == "10000"
+    assert pnl["daily_net_pnl"] == "50"
+    await rt2.shutdown()
 
 
 async def test_state_publish_includes_risk_protection_reconciliation(redis, session_factory):

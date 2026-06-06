@@ -6,6 +6,7 @@ import type {
   CommandAccepted,
   DailyLog,
   DailyPnl,
+  MonthlyPnl,
   BotEvent,
   Fill,
   Order,
@@ -54,6 +55,7 @@ export const api = {
 
   pnlSummary: () => apiGet<PnlSummary>("/pnl/summary"),
   pnlDaily: () => apiGet<{ daily: DailyPnl[] }>("/pnl/daily"),
+  pnlMonthly: () => apiGet<{ monthly: MonthlyPnl[] }>("/pnl/monthly"),
 
   events: (q?: ListQuery) => apiGet<{ events: BotEvent[] }>("/events", q),
 

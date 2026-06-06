@@ -122,6 +122,37 @@ async def test_scanner_refresh_populates_runtime_watchlist(redis):
     await rt.shutdown()
 
 
+async def test_empty_scanner_watchlist_does_not_fallback_to_universe(redis):
+    gw = FakeGateway()
+    gw.set_instruments(
+        [
+            symbol_meta(symbol="1000PEPEUSDT", launch_time_ms=0),
+            symbol_meta(symbol="BTCUSDT", launch_time_ms=0),
+        ]
+    )
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+
+    rt._watchlist = []
+    assert rt._watch_symbols() == []
+
+    rt.runtime_state.positions["BTCUSDT"] = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("1"),
+        avg_entry_price=Decimal("100"),
+        stop_loss_price=Decimal("99"),
+        take_profit_price=Decimal("102"),
+        initial_risk_per_unit=Decimal("1"),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM,
+    )
+    assert rt._watch_symbols() == ["BTCUSDT"]
+    await rt.shutdown()
+
+
 async def test_scanner_refresh_prefilters_before_kline_atr(redis):
     gw = FakeGateway()
     symbols = [f"SYM{i}USDT" for i in range(10)]

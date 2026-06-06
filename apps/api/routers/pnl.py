@@ -27,3 +27,11 @@ async def pnl_daily(
     session_factory: Any = Depends(get_session_factory),
 ) -> dict:
     return ok({"daily": await pnl_service.daily(session_factory, limit=limit)})
+
+
+@router.get("/pnl/monthly")
+async def pnl_monthly(
+    limit: int = Query(24, ge=1, le=120),
+    session_factory: Any = Depends(get_session_factory),
+) -> dict:
+    return ok({"monthly": await pnl_service.monthly(session_factory, limit=limit)})

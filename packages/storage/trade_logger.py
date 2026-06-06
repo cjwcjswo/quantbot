@@ -19,6 +19,7 @@ from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
     BotEventRow,
     CommandLogRow,
+    DailyAccountEquityRow,
     DailyPnlRow,
     FillRow,
     ManualInterventionLogRow,
@@ -325,3 +326,117 @@ class TradeLogger:
                 row.realized, row.unrealized = realized, unrealized
                 row.fees, row.net = fees, net
             await session.commit()
+
+    async def log_account_equity(
+        self,
+        *,
+        day: str,
+        mode: str,
+        equity: str,
+        wallet_balance: str | None = None,
+        unrealized_pnl: str = "0",
+        realized_pnl: str = "0",
+        fees: str = "0",
+        funding_fees: str = "0",
+    ) -> dict[str, str]:
+        """Persist the first equity of the day as the daily PnL baseline.
+
+        The row is keyed by ``day`` + ``mode`` in application logic so it works
+        on both SQLite tests and Postgres without a migration-specific upsert.
+        """
+        from decimal import Decimal
+
+        def d(value: str | None) -> Decimal:
+            try:
+                return Decimal(str(value)) if value is not None else Decimal(0)
+            except Exception:  # noqa: BLE001
+                return Decimal(0)
+
+        def fmt(value: Decimal) -> str:
+            return format(value.normalize(), "f")
+
+        now = _utcnow()
+        current = d(equity)
+        wallet = fmt(d(wallet_balance)) if wallet_balance is not None else None
+        async with self._sf() as session:
+            row = (
+                await session.execute(
+                    select(DailyAccountEquityRow)
+                    .where(
+                        DailyAccountEquityRow.day == day,
+                        DailyAccountEquityRow.mode == mode,
+                    )
+                    .order_by(DailyAccountEquityRow.id.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                row = DailyAccountEquityRow(
+                    day=day,
+                    mode=mode,
+                    start_equity=fmt(current),
+                    current_equity=fmt(current),
+                    peak_equity=fmt(current),
+                    wallet_balance=wallet,
+                    updated_at=now,
+                )
+                session.add(row)
+
+            start = d(row.start_equity)
+            peak = max(d(row.peak_equity), current)
+            net = current - start
+            net_percent = net / start * Decimal(100) if start > 0 else Decimal(0)
+            drawdown = (
+                (peak - current) / peak * Decimal(100) if peak > 0 else Decimal(0)
+            )
+            max_drawdown = max(d(row.max_drawdown_percent), drawdown)
+
+            row.current_equity = fmt(current)
+            row.peak_equity = fmt(peak)
+            row.wallet_balance = wallet
+            row.unrealized_pnl = fmt(d(unrealized_pnl))
+            row.realized_pnl = fmt(d(realized_pnl))
+            row.fees = fmt(d(fees))
+            row.funding_fees = fmt(d(funding_fees))
+            row.net_pnl = fmt(net)
+            row.net_pnl_percent = fmt(net_percent)
+            row.max_drawdown_percent = fmt(max_drawdown)
+            row.updated_at = now
+
+            daily = (
+                await session.execute(
+                    select(DailyPnlRow).where(DailyPnlRow.day == day).limit(1)
+                )
+            ).scalar_one_or_none()
+            if daily is None:
+                session.add(
+                    DailyPnlRow(
+                        day=day,
+                        realized=row.realized_pnl,
+                        unrealized=row.unrealized_pnl,
+                        fees=row.fees,
+                        net=row.net_pnl,
+                    )
+                )
+            else:
+                daily.realized = row.realized_pnl
+                daily.unrealized = row.unrealized_pnl
+                daily.fees = row.fees
+                daily.net = row.net_pnl
+
+            await session.commit()
+            return {
+                "day": row.day,
+                "mode": row.mode,
+                "start_equity": row.start_equity,
+                "current_equity": row.current_equity,
+                "wallet_balance": row.wallet_balance or "",
+                "unrealized_pnl": row.unrealized_pnl,
+                "realized_pnl": row.realized_pnl,
+                "fees": row.fees,
+                "funding_fees": row.funding_fees,
+                "net_pnl": row.net_pnl,
+                "net_pnl_percent": row.net_pnl_percent,
+                "max_drawdown_percent": row.max_drawdown_percent,
+                "updated_at": row.updated_at.isoformat() if row.updated_at else "",
+            }

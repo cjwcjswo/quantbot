@@ -175,6 +175,26 @@ class DailyPnlRow(_Row):
     net: Mapped[str] = mapped_column(String(32), default="0")
 
 
+class DailyAccountEquityRow(_Row):
+    __tablename__ = "daily_account_equity"
+    day: Mapped[str] = mapped_column(String(16), index=True)
+    mode: Mapped[str] = mapped_column(String(8), default="PAPER", index=True)
+    start_equity: Mapped[str] = mapped_column(String(32))
+    current_equity: Mapped[str] = mapped_column(String(32))
+    peak_equity: Mapped[str] = mapped_column(String(32))
+    wallet_balance: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    unrealized_pnl: Mapped[str] = mapped_column(String(32), default="0")
+    realized_pnl: Mapped[str] = mapped_column(String(32), default="0")
+    fees: Mapped[str] = mapped_column(String(32), default="0")
+    funding_fees: Mapped[str] = mapped_column(String(32), default="0")
+    net_pnl: Mapped[str] = mapped_column(String(32), default="0")
+    net_pnl_percent: Mapped[str] = mapped_column(String(32), default="0")
+    max_drawdown_percent: Mapped[str] = mapped_column(String(32), default="0")
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class StrategyConfigRow(_Row):
     __tablename__ = "strategy_configs"
     name: Mapped[str] = mapped_column(String(64))

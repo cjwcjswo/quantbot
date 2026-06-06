@@ -10,6 +10,7 @@ from sqlalchemy import select
 from apps.api.repositories.base import row_to_dict
 from packages.storage.models import (
     BotEventRow,
+    DailyAccountEquityRow,
     DailyEventSummaryRow,
     DailyManualInterventionSummaryRow,
     DailyPnlRow,
@@ -22,10 +23,99 @@ from packages.storage.models import (
 
 async def list_daily_pnl(session_factory: Any, *, limit: int = 90) -> list[dict]:
     async with session_factory() as s:
-        rows = (await s.execute(
+        equity_rows = (await s.execute(
+            select(DailyAccountEquityRow)
+            .order_by(DailyAccountEquityRow.day.desc(), DailyAccountEquityRow.id.desc())
+            .limit(limit)
+        )).scalars().all()
+        pnl_rows = (await s.execute(
             select(DailyPnlRow).order_by(DailyPnlRow.day.desc()).limit(limit)
         )).scalars().all()
-    return [row_to_dict(r) for r in rows]
+
+    out = []
+    seen_days = set()
+    for row in equity_rows:
+        out.append(_daily_equity_dict(row))
+        seen_days.add(row.day)
+    for row in pnl_rows:
+        if row.day not in seen_days:
+            out.append(row_to_dict(row))
+    return sorted(out, key=lambda r: str(r.get("day", "")), reverse=True)[:limit]
+
+
+async def latest_daily_equity(session_factory: Any) -> dict | None:
+    async with session_factory() as s:
+        row = (await s.execute(
+            select(DailyAccountEquityRow)
+            .order_by(DailyAccountEquityRow.day.desc(), DailyAccountEquityRow.id.desc())
+            .limit(1)
+        )).scalar_one_or_none()
+    return _daily_equity_dict(row) if row else None
+
+
+async def monthly_pnl(session_factory: Any, *, limit: int = 24) -> list[dict]:
+    daily = await list_daily_pnl(session_factory, limit=1000)
+    months: dict[str, dict] = {}
+    for row in sorted(daily, key=lambda r: str(r.get("day", ""))):
+        day = str(row.get("day", ""))
+        if len(day) < 7:
+            continue
+        month = day[:7]
+        net = _num(row.get("net") or row.get("net_pnl"))
+        bucket = months.setdefault(
+            month,
+            {
+                "month": month,
+                "days": 0,
+                "start_equity": row.get("start_equity"),
+                "end_equity": row.get("current_equity") or row.get("equity"),
+                "net_pnl": 0.0,
+                "max_drawdown_percent": 0.0,
+            },
+        )
+        bucket["days"] += 1
+        bucket["end_equity"] = row.get("current_equity") or row.get("equity")
+        bucket["net_pnl"] += net
+        bucket["max_drawdown_percent"] = max(
+            bucket["max_drawdown_percent"],
+            _num(row.get("max_drawdown_percent") or row.get("max_drawdown_today")),
+        )
+    out = []
+    for bucket in months.values():
+        start = _num(bucket.get("start_equity"))
+        net = bucket["net_pnl"]
+        out.append(
+            {
+                "month": bucket["month"],
+                "days": bucket["days"],
+                "start_equity": bucket.get("start_equity"),
+                "end_equity": bucket.get("end_equity"),
+                "net_pnl": _fmt(net),
+                "net_pnl_percent": _fmt(net / start * 100) if start > 0 else "0.00",
+                "max_drawdown_percent": _fmt(bucket["max_drawdown_percent"]),
+            }
+        )
+    return sorted(out, key=lambda r: r["month"], reverse=True)[:limit]
+
+
+def _daily_equity_dict(row: DailyAccountEquityRow) -> dict:
+    return {
+        "day": row.day,
+        "mode": row.mode,
+        "start_equity": row.start_equity,
+        "current_equity": row.current_equity,
+        "equity": row.current_equity,
+        "wallet_balance": row.wallet_balance,
+        "realized": row.realized_pnl,
+        "unrealized": row.unrealized_pnl,
+        "fees": row.fees,
+        "funding_fees": row.funding_fees,
+        "net": row.net_pnl,
+        "net_pnl": row.net_pnl,
+        "net_pnl_percent": row.net_pnl_percent,
+        "max_drawdown_percent": row.max_drawdown_percent,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
 
 
 async def daily_pnl_for(session_factory: Any, day: str) -> dict | None:

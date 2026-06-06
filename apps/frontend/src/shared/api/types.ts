@@ -189,6 +189,7 @@ export type Fill = {
 export type PnlSummary = {
   mode: BotMode | null;
   equity: string | null;
+  start_equity?: string | null;
   daily_net_pnl: string;
   daily_net_pnl_percent: string | null;
   realized_pnl: string;
@@ -202,10 +203,26 @@ export type PnlSummary = {
 
 export type DailyPnl = {
   day: string;
+  mode?: BotMode | null;
+  start_equity?: string | null;
+  current_equity?: string | null;
   realized: string;
   unrealized: string;
   fees: string;
+  funding_fees?: string | null;
   net: string;
+  net_pnl_percent?: string | null;
+  max_drawdown_percent?: string | null;
+};
+
+export type MonthlyPnl = {
+  month: string;
+  days: number;
+  start_equity: string | null;
+  end_equity: string | null;
+  net_pnl: string;
+  net_pnl_percent: string;
+  max_drawdown_percent: string;
 };
 
 export type Severity = "INFO" | "WARNING" | "ERROR" | "CRITICAL";

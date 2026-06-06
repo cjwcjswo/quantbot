@@ -8,3 +8,7 @@ export function usePnlSummary() {
 export function usePnlDaily() {
   return useQuery({ queryKey: ["pnlDaily"], queryFn: api.pnlDaily, refetchInterval: 30000 });
 }
+
+export function usePnlMonthly() {
+  return useQuery({ queryKey: ["pnlMonthly"], queryFn: api.pnlMonthly, refetchInterval: 30000 });
+}

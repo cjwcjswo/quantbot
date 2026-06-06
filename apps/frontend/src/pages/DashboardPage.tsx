@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useBotStatus } from "@/features/bot-status/hooks";
-import { usePnlSummary, usePnlDaily } from "@/features/pnl/hooks";
+import { usePnlSummary, usePnlDaily, usePnlMonthly } from "@/features/pnl/hooks";
 import { usePositions } from "@/features/positions/hooks";
 import { useWatchlist } from "@/features/watchlist/hooks";
 import { useOrders } from "@/features/orders/hooks";
@@ -9,6 +9,7 @@ import { useTrades } from "@/features/trades/hooks";
 import { useEvents } from "@/features/events/hooks";
 import { CommandBar } from "@/features/commands/components/CommandBar";
 import { PnlChart } from "@/features/pnl/components/PnlChart";
+import { PnlReportTables } from "@/features/pnl/components/PnlReportTables";
 import { PositionsTable } from "@/features/positions/components/PositionsTable";
 import { WatchlistTable } from "@/features/watchlist/components/WatchlistTable";
 import { OrdersTable } from "@/features/orders/components/OrdersTable";
@@ -28,6 +29,7 @@ export function DashboardPage() {
   const status = useBotStatus();
   const pnl = usePnlSummary();
   const daily = usePnlDaily();
+  const monthly = usePnlMonthly();
   const positions = usePositions();
   const watchlist = useWatchlist();
   const orders = useOrders();
@@ -40,6 +42,7 @@ export function DashboardPage() {
   const p = pnl.data;
   const openPositions = positions.data?.positions ?? [];
   const watchEntries = watchlist.data?.watchlist ?? [];
+  const latestMonth = monthly.data?.monthly?.[0];
 
   return (
     <div className="space-y-4">
@@ -51,10 +54,16 @@ export function DashboardPage() {
         <MetricCard label="봇 상태" value={s ? <StatusBadge state={s.state} /> : "—"} />
         <MetricCard label="모드" value={<ModeBadge mode={s?.mode ?? null} />} />
         <MetricCard label="자산" value={formatNumber(p?.equity)} />
+        <MetricCard label="일 시작 자산" value={formatNumber(p?.start_equity)} />
         <MetricCard
           label="일일 순손익"
           value={formatNumber(p?.daily_net_pnl)}
           valueClassName={pnlClass(p?.daily_net_pnl)}
+        />
+        <MetricCard
+          label="월간 순손익"
+          value={formatNumber(latestMonth?.net_pnl)}
+          valueClassName={pnlClass(latestMonth?.net_pnl)}
         />
         <MetricCard label="보유 포지션" value={openPositions.length} />
         <MetricCard label="리스크" value={statusText(s?.risk_status, "—")} />
@@ -90,6 +99,10 @@ export function DashboardPage() {
           <Calendar mode={s?.mode ?? undefined} onSelectDate={setLogDate} />
         </Panel>
       </div>
+
+      <Panel title="손익 리포트">
+        <PnlReportTables daily={daily.data?.daily ?? []} monthly={monthly.data?.monthly ?? []} />
+      </Panel>
 
       <Panel title="현재 포지션">
         <PositionsTable positions={openPositions} />

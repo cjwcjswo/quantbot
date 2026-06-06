@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -33,6 +34,7 @@ from packages.core.enums import BotMode, BotState, ExitReason
 from packages.core.enums import OrderStatus
 from packages.core.errors import RuntimeLockError
 from packages.core.events import BotEvent, BotEventType
+from packages.core.models import WalletBalance
 from packages.entry import EntryTimingEngine
 from packages.exchange import ExchangeGateway
 from packages.execution import OrderManager, PaperExecutionEngine
@@ -72,6 +74,7 @@ from packages.strategy import StrategyRegistry, TrendFollowingStrategy
 from packages.universe import UniverseManager
 
 logger = logging.getLogger(__name__)
+KST = timezone(timedelta(hours=9))
 
 class BotRuntime:
     def __init__(
@@ -409,6 +412,22 @@ class BotRuntime:
             return self._paper_engine.wallet(marks).equity
         return self._last_equity
 
+    async def _wallet_snapshot(self, marks: dict[str, Decimal]) -> WalletBalance:
+        if self.config.bot.mode == BotMode.LIVE:
+            try:
+                return await self._gateway.get_wallet_balance()
+            except Exception:
+                logger.debug("wallet balance fetch failed; using last equity")
+        elif self._paper_engine is not None:
+            return self._paper_engine.wallet(marks)
+        return WalletBalance(
+            coin=self.config.bot.account_currency,
+            equity=self._last_equity,
+            available_balance=self._last_equity,
+            wallet_balance=self._last_equity,
+            unrealized_pnl=Decimal(0),
+        )
+
     async def _publish_state(self) -> None:
         if self._state_publisher is None:
             return
@@ -446,40 +465,79 @@ class BotRuntime:
                 pass
 
     async def _publish_and_persist_pnl(self) -> None:
-        import datetime as _dt
-
         marks: dict[str, Decimal] = {}
         if self._collector is not None:
             marks = {t.symbol: t.last_price for t in self._collector.tickers()}
         positions = list(self.runtime_state.positions.values())
         snap = compute_pnl(positions, marks)
         open_positions = self.runtime_state.open_positions()
-        equity = await self._equity_snapshot(marks)
+        wallet = await self._wallet_snapshot(marks)
+        equity = wallet.equity
         self._last_equity = equity
+        pnl_payload = {
+            "realized": str(snap.realized),
+            "unrealized": str(wallet.unrealized_pnl),
+            "fees": str(snap.fees),
+            "funding_fees": str(snap.funding),
+            "net": str(snap.net),
+            "equity": str(equity),
+            "wallet_balance": str(wallet.wallet_balance),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if self._trade_logger is not None:
+            day = datetime.now(KST).strftime("%Y-%m-%d")
+            account = await self._trade_logger.log_account_equity(
+                day=day,
+                mode=self.config.bot.mode.value,
+                equity=str(equity),
+                wallet_balance=str(wallet.wallet_balance),
+                unrealized_pnl=str(wallet.unrealized_pnl),
+                realized_pnl=str(snap.realized),
+                fees=str(snap.fees),
+                funding_fees=str(snap.funding),
+            )
+            pnl_payload.update(
+                {
+                    "day": account["day"],
+                    "start_equity": account["start_equity"],
+                    "daily_net_pnl": account["net_pnl"],
+                    "daily_net_pnl_percent": account["net_pnl_percent"],
+                    "max_drawdown_today": account["max_drawdown_percent"],
+                    "updated_at": account["updated_at"],
+                }
+            )
         if self._state_publisher is not None:
             await self._state_publisher.publish(
                 state=self.state_machine.state,
                 positions=open_positions,
-                pnl={"realized": str(snap.realized), "unrealized": str(snap.unrealized),
-                     "fees": str(snap.fees), "net": str(snap.net), "equity": str(equity)},
+                pnl=pnl_payload,
                 risk_status=self._risk_status(),
                 protection_status=self._protection_status(),
                 reconciliation_status=self._last_reconciliation_status,
             )
         if self._trade_logger is not None:
-            day = _dt.date.today().isoformat()
+            day = datetime.now(KST).strftime("%Y-%m-%d")
             await self._trade_logger.log_daily_pnl(
-                day=day, realized=str(snap.realized), unrealized=str(snap.unrealized),
-                fees=str(snap.fees), net=str(snap.net),
+                day=day, realized=str(snap.realized),
+                unrealized=str(wallet.unrealized_pnl),
+                fees=str(snap.fees),
+                net=str(pnl_payload.get("daily_net_pnl", snap.net)),
             )
             if self._paper_engine is not None:
-                w = self._paper_engine.wallet(marks)
                 await self._trade_logger.log_paper_snapshot(
-                    equity=str(w.equity), balance=str(w.wallet_balance),
-                    unrealized_pnl=str(w.unrealized_pnl),
+                    equity=str(wallet.equity), balance=str(wallet.wallet_balance),
+                    unrealized_pnl=str(wallet.unrealized_pnl),
                 )
         if self._kill_switch is not None and self._last_equity > 0:
-            loss = max(Decimal(0), daily_loss_percent(snap, self._last_equity))
+            daily_net = Decimal(str(pnl_payload.get("daily_net_pnl", snap.net)))
+            daily_snapshot = snap.__class__(
+                realized=daily_net,
+                unrealized=Decimal(0),
+                fees=Decimal(0),
+                funding=Decimal(0),
+                net=daily_net,
+            )
+            loss = max(Decimal(0), daily_loss_percent(daily_snapshot, self._last_equity))
             self._kill_switch.update_pnl(
                 daily_loss_percent=float(loss),
                 intraday_drawdown_percent=float(loss),
@@ -645,7 +703,7 @@ class BotRuntime:
     def _watch_symbols(self) -> list[str]:
         if self._universe is None:
             return []
-        symbols = self._watchlist or self._universe.all_symbols()
+        symbols = self._watchlist
         # already-open bot positions are always watched (for management)
         held = [p.symbol for p in self.runtime_state.active_bot_positions()]
         watch = list(dict.fromkeys(held + symbols))
