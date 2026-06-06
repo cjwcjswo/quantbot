@@ -1,8 +1,12 @@
 import type { Order } from "@/shared/api/types";
 import { DataTable, type Column } from "@/shared/components/DataTable";
-import { TextBadge } from "@/shared/components/Badges";
+import { DirectionBadge, TextBadge } from "@/shared/components/Badges";
 import { Button } from "@/shared/components/Button";
 import { formatDateTime, formatNumber, formatPrice } from "@/shared/utils/format";
+import {
+  directionFromOrderSide,
+  orderIntentLabel,
+} from "@/shared/utils/tradingDirection";
 
 const STATUS_TONE: Record<string, string> = {
   NEW: "sky",
@@ -28,7 +32,22 @@ export function OrdersTable({
   const columns: Column<Order>[] = [
     { key: "order_id", header: "주문 ID", render: (o) => o.order_id ?? `#${o.id}` },
     { key: "symbol", header: "종목", render: (o) => o.symbol },
-    { key: "side", header: "방향", render: (o) => o.side },
+    {
+      key: "positionDirection",
+      header: "포지션",
+      render: (o) => {
+        const direction = directionFromOrderSide(o.side, o.reduce_only);
+        return direction ? (
+          <span className="inline-flex items-center gap-2">
+            <DirectionBadge direction={direction} />
+            <span className="text-xs text-slate-400">{orderIntentLabel(o.reduce_only)}</span>
+          </span>
+        ) : (
+          <span className="text-slate-600">방향 미기록</span>
+        );
+      },
+    },
+    { key: "side", header: "주문 방향", render: (o) => o.side },
     { key: "type", header: "유형", render: (o) => o.order_type },
     {
       key: "status",

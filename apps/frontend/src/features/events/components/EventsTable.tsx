@@ -1,8 +1,12 @@
 import { useState } from "react";
-import type { BotEvent } from "@/shared/api/types";
+import type { BotEvent, Order } from "@/shared/api/types";
 import { DataTable, type Column } from "@/shared/components/DataTable";
-import { SeverityBadge } from "@/shared/components/Badges";
+import { DirectionBadge, SeverityBadge } from "@/shared/components/Badges";
 import { formatDateTime } from "@/shared/utils/format";
+import {
+  directionFromEventData,
+  directionFromRelatedOrders,
+} from "@/shared/utils/tradingDirection";
 
 const DANGEROUS = new Set([
   "EMERGENCY_STOP",
@@ -16,7 +20,7 @@ const DANGEROUS = new Set([
   "KILL_SWITCH_TRIPPED",
 ]);
 
-export function EventsTable({ events }: { events: BotEvent[] }) {
+export function EventsTable({ events, orders = [] }: { events: BotEvent[]; orders?: Order[] }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const columns: Column<BotEvent>[] = [
     { key: "ts", header: "시각", render: (e) => formatDateTime(e.ts) },
@@ -29,6 +33,19 @@ export function EventsTable({ events }: { events: BotEvent[] }) {
       ),
     },
     { key: "symbol", header: "종목", render: (e) => e.symbol ?? "-" },
+    {
+      key: "direction",
+      header: "방향",
+      render: (e) => {
+        const direction = directionFromEventData(e.data) ?? directionFromRelatedOrders(e, orders);
+        if (direction) return <DirectionBadge direction={direction} />;
+        return e.symbol ? (
+          <span className="text-xs text-slate-500">방향 미기록</span>
+        ) : (
+          <span className="text-slate-600">—</span>
+        );
+      },
+    },
     { key: "message", header: "메시지", render: (e) => e.message },
     {
       key: "details",

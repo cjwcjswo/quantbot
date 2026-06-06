@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useEvents } from "@/features/events/hooks";
+import { useOrders } from "@/features/orders/hooks";
 import { EventsTable } from "@/features/events/components/EventsTable";
 import { Panel } from "@/shared/components/Panel";
 import { SelectInput, TextInput } from "@/shared/components/Field";
@@ -19,6 +20,7 @@ export function EventsPage() {
     severity: severity || undefined,
     limit: 200,
   });
+  const orders = useOrders({ symbol: symbol || undefined, limit: 500 });
 
   return (
     <Panel title="이벤트">
@@ -45,7 +47,7 @@ export function EventsPage() {
           onRetry={() => refetch()}
         />
       )}
-      {data && <EventsTable events={data.events} />}
+      {data && <EventsTable events={data.events} orders={orders.data?.orders ?? []} />}
     </Panel>
   );
 }

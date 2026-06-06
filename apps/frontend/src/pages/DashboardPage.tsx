@@ -119,7 +119,10 @@ export function DashboardPage() {
       </div>
 
       <Panel title="최근 이벤트">
-        <EventsTable events={(events.data?.events ?? []).slice(0, 12)} />
+        <EventsTable
+          events={(events.data?.events ?? []).slice(0, 12)}
+          orders={orders.data?.orders ?? []}
+        />
       </Panel>
 
       <TradeDetailDrawer tradeId={tradeId} onClose={() => setTradeId(null)} />

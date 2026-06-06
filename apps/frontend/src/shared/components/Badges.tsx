@@ -1,4 +1,6 @@
 import type { BotMode, BotState, ProtectionStatus, Severity } from "@/shared/api/types";
+import type { PositionDirection } from "@/shared/utils/tradingDirection";
+import { directionLabel } from "@/shared/utils/tradingDirection";
 import { cn } from "@/shared/utils/cn";
 
 function Pill({ text, className }: { text: string; className: string }) {
@@ -76,4 +78,12 @@ export function TextBadge({ text, tone = "slate" }: { text: string; tone?: strin
     sky: "bg-sky-500/15 text-sky-400 border border-sky-500/30",
   };
   return <Pill text={text} className={map[tone] ?? map.slate} />;
+}
+
+export function DirectionBadge({ direction }: { direction: PositionDirection }) {
+  const className =
+    direction === "LONG"
+      ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+      : "bg-red-500/20 text-red-400 border border-red-500/40";
+  return <Pill text={directionLabel(direction)} className={className} />;
 }
