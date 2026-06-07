@@ -28,7 +28,7 @@ from packages.messaging import (
     state_keys,
 )
 from tests.fakes import FakeGateway
-from tests.fakes.builders import series_from_closes, symbol_meta, ticker
+from tests.fakes.builders import candle, series_from_closes, symbol_meta, ticker
 
 
 def _runtime(redis, gateway=None, *, mode=None):
@@ -249,6 +249,52 @@ async def test_process_symbol_refreshes_stale_tickers(redis):
     await rt._process_symbol("BTCUSDT", Decimal("10000"))
 
     assert gw.ticker_calls >= 2
+    await rt.shutdown()
+
+
+async def test_process_symbol_passes_only_confirmed_candles_to_entry(redis):
+    class CaptureTrading:
+        def __init__(self):
+            self.candles_1m = None
+
+        async def update_post_exit_mfe(self, *args, **kwargs):
+            return None
+
+        async def evaluate_entry(self, **kwargs):
+            self.candles_1m = kwargs["candles_1m"]
+            return None
+
+        def preview_watch(self, **kwargs):
+            return {}
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    confirmed_1m = series_from_closes(
+        ["100"] * 120, symbol="BTCUSDT", interval="1"
+    )
+    current_1m = candle(
+        symbol="BTCUSDT", interval="1", open_time_ms=120 * 60_000,
+        c="105", confirmed=False,
+    )
+    gw.set_kline("BTCUSDT", "1", confirmed_1m + [current_1m])
+    for tf in ("5", "15"):
+        gw.set_kline("BTCUSDT", tf,
+                     series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
+
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+    await rt._collector.refresh_tickers()
+    capture = CaptureTrading()
+    rt._trading = capture
+
+    await rt._process_symbol("BTCUSDT", Decimal("10000"))
+
+    assert capture.candles_1m is not None
+    assert all(c.confirmed for c in capture.candles_1m)
+    assert capture.candles_1m[-1].open_time_ms != current_1m.open_time_ms
     await rt.shutdown()
 
 

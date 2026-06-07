@@ -931,7 +931,7 @@ class BotRuntime:
 
         opened = await self._trading.evaluate_entry(
             symbol=symbol, snapshots=snapshots,
-            candles_1m=self._collector.store.get_with_current(symbol, "1"),
+            candles_1m=self._collector.store.get(symbol, "1"),
             box_high=box_high, box_low=box_low, symbol_meta=meta,
             equity=equity, entry_price=ticker.last_price, best_bid=bid, best_ask=ask,
             market=market, orderbook_provider=load_orderbook,
