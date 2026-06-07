@@ -164,7 +164,7 @@ class PendingLimitGateway(FakeGateway):
         )
 
 
-async def test_scout_limit_uses_30_second_ttl(config):
+async def test_scout_limit_uses_45_second_ttl(config):
     config.orders.scout_order_type = "LIMIT"
     config.orders.limit_reorder_attempts = 0
     now = 0.0
@@ -186,7 +186,7 @@ async def test_scout_limit_uses_30_second_ttl(config):
     )
 
     assert out.status == "NO_FILL"
-    assert now == 30
+    assert now == 45
 
 
 async def test_retest_limit_uses_20_second_ttl(config):

@@ -1,10 +1,10 @@
 """PositionManager: bot position lifecycle management (impl doc §14, arch doc §6.21).
 
 ``evaluate`` is a pure, per-1m-bar decision function returning the actions to take
-for one bot-managed position: partial take-profit (+2R 50%), trailing stop
-(+2R ATR*2.0, +5R ATR*2.5), stagnation exit, scenario-invalidation exit and the
-max-holding-time exit. Order execution (LIVE OrderManager / PAPER engine) is
-applied by the caller, keeping this logic deterministic and unit-testable.
+for one bot-managed position: partial take-profit, trailing/runner updates,
+stagnation exit, scenario-invalidation exit and the max-holding-time exit. Order
+execution (LIVE OrderManager / PAPER engine) is applied by the caller, keeping
+this logic deterministic and unit-testable.
 """
 
 from __future__ import annotations
@@ -64,6 +64,7 @@ class PositionManager:
         self._runner_ema_break_counts: dict[str, int] = {}
         self._runner_weak_signal_counts: dict[str, int] = {}
         self._runner_weak_signal_open_times: dict[str, int] = {}
+        self._stagnation_delay_emitted: set[tuple[str, str, str]] = set()
 
     def mark_active_paper(self, position: Position) -> None:
         """PAPER positions become ACTIVE once virtual fill + SL/TP stored (§14.1)."""
@@ -209,7 +210,7 @@ class PositionManager:
 
         # 4. stagnation (§14.4)
         stagnation = None if position.runner_mode_active else self._stagnation_action(
-            position, max_r
+            position, max_r, current_r=r, price=price, atr=atr
         )
         if stagnation is not None:
             return prefix_actions + runner_events + [stagnation]
@@ -833,8 +834,16 @@ class PositionManager:
                 )
             ], False
 
-        stagnation = self._stagnation_action(position, max_r)
+        stagnation = self._stagnation_action(
+            position,
+            max_r,
+            current_r=self.r_multiple(position, price),
+            price=price,
+            atr=atr,
+        )
         if stagnation is not None:
+            if stagnation.event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE":
+                return [stagnation], False
             return [
                 self._scout_event(
                     position, "SCOUT_INVALIDATED", price, candle,
@@ -1353,7 +1362,13 @@ class PositionManager:
         return False
 
     def _stagnation_action(
-        self, position: Position, max_r: Decimal
+        self,
+        position: Position,
+        max_r: Decimal,
+        *,
+        current_r: Decimal,
+        price: Decimal,
+        atr: Decimal,
     ) -> PositionAction | None:
         if not self.cfg.stagnation_exit.enabled:
             return None
@@ -1363,8 +1378,21 @@ class PositionManager:
         from packages.core.enums import EntryMode
 
         if mode == EntryMode.PRE_BREAKOUT_SCOUT:
-            if bars >= se.pre_breakout_scout.max_bars_without_breakout and max_r < Decimal("0.5"):
+            min_progress = Decimal(str(se.pre_breakout_scout.min_progress_r))
+            if (
+                bars >= se.pre_breakout_scout.max_bars_without_breakout
+                and max_r < min_progress
+            ):
                 return self._exit(position, ExitReason.STAGNATION)
+            if bars >= 8 and max_r < Decimal("0.5"):
+                return self._stagnation_delay_event(
+                    position,
+                    current_r=current_r,
+                    max_r=max_r,
+                    price=price,
+                    atr=atr,
+                    reason="SCOUT_STAGNATION_DELAYED",
+                )
         elif mode == EntryMode.BREAKOUT_CONFIRM:
             if bars >= se.breakout_confirm.max_bars_without_1r and max_r < Decimal("1.0"):
                 return self._exit(position, ExitReason.STAGNATION)
@@ -1391,6 +1419,28 @@ class PositionManager:
                         "reason": "STAGNATION",
                     },
                 )
+            if bars >= 10 and max_r < Decimal("1.0"):
+                return self._stagnation_delay_event(
+                    position,
+                    current_r=current_r,
+                    max_r=max_r,
+                    price=price,
+                    atr=atr,
+                    reason="BREAKOUT_EXIT_DELAYED",
+                )
+            if (
+                bars >= 5
+                and max_r < Decimal("0.5")
+                and position.symbol not in self._stag_reduced
+            ):
+                return self._stagnation_delay_event(
+                    position,
+                    current_r=current_r,
+                    max_r=max_r,
+                    price=price,
+                    atr=atr,
+                    reason="BREAKOUT_REDUCE_DELAYED",
+                )
         elif mode == EntryMode.RETEST_CONFIRM:
             if bars >= se.retest_confirm.max_bars_without_1r and max_r < Decimal("1.0"):
                 return self._exit(position, ExitReason.STAGNATION)
@@ -1398,7 +1448,75 @@ class PositionManager:
                 # tighten stop toward entry (impl doc §14.4 retest)
                 tighter = self._tighten_stop(position)
                 return PositionAction(type=PositionActionType.TRAIL_UPDATE, new_stop=tighter)
+            if bars >= 12 and max_r < Decimal("1.0"):
+                return self._stagnation_delay_event(
+                    position,
+                    current_r=current_r,
+                    max_r=max_r,
+                    price=price,
+                    atr=atr,
+                    reason="RETEST_EXIT_DELAYED",
+                )
+            if bars >= 6 and max_r < Decimal("0.5"):
+                return self._stagnation_delay_event(
+                    position,
+                    current_r=current_r,
+                    max_r=max_r,
+                    price=price,
+                    atr=atr,
+                    reason="RETEST_TIGHTEN_DELAYED",
+                )
         return None
+
+    def _stagnation_delay_event(
+        self,
+        position: Position,
+        *,
+        current_r: Decimal,
+        max_r: Decimal,
+        price: Decimal,
+        atr: Decimal,
+        reason: str,
+    ) -> PositionAction | None:
+        key = (position.symbol, reason, position.opened_at.isoformat())
+        if key in self._stagnation_delay_emitted:
+            return None
+        self._stagnation_delay_emitted.add(key)
+        return PositionAction(
+            type=PositionActionType.SCOUT_EVENT,
+            event_type="STAGNATION_DELAYED_BY_ENTRY_MODE",
+            data={
+                "symbol": position.symbol,
+                "side": position.side.value,
+                "entry_mode": position.entry_mode.value
+                if position.entry_mode is not None
+                else None,
+                "entry_price": str(position.avg_entry_price),
+                "current_price": str(price),
+                "remaining_qty": str(position.qty),
+                "max_r": str(max_r),
+                "current_r": str(current_r),
+                "trend_strength": position.runner_trend_strength,
+                "trailing_multiplier": str(position.runner_trailing_atr_multiplier)
+                if position.runner_trailing_atr_multiplier is not None
+                else None,
+                "atr": str(atr),
+                "highest_price": str(position.highest_price)
+                if position.highest_price is not None
+                else None,
+                "lowest_price": str(position.lowest_price)
+                if position.lowest_price is not None
+                else None,
+                "old_trailing_stop": str(position.stop_loss_price)
+                if position.stop_loss_price is not None
+                else None,
+                "exchange_sl_before": str(position.stop_loss_price)
+                if position.stop_loss_price is not None
+                else None,
+                "bars_since_entry": position.bars_since_entry,
+                "reason": reason,
+            },
+        )
 
     def _tighten_stop(self, position: Position) -> Decimal:
         entry = position.avg_entry_price

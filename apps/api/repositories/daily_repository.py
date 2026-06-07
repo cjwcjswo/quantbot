@@ -294,7 +294,7 @@ def _relaxation_candidates(reasons: list[str], stages: list[str]) -> list[dict]:
     stage_counts = _top_counts(stages)
     suggestions = {
         "VOLUME_TOO_LOW": "volume.min_setup_volume_ratio or entry volume threshold",
-        "BREAKOUT_VOLUME_TOO_LOW": "volume.min_breakout_volume_ratio",
+        "BREAKOUT_VOLUME_TOO_LOW": "entry.breakout_confirm.volume_min_ratio",
         "BODY_TOO_SMALL": "candle_quality.min_body_ratio_for_breakout",
         "OPPOSITE_WICK_TOO_LARGE": "candle_quality.max_opposite_wick_ratio_for_breakout",
         "WEAK_CLOSE_IN_RANGE": "candle_quality close-position threshold",

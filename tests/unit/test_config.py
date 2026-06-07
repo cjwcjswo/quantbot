@@ -67,10 +67,16 @@ def test_loads_repo_config():
     assert cfg.position.runner_mode.enabled is True
     assert cfg.position.trailing_atr_multiplier == 2.4
     assert cfg.position.trailing_extended_atr_multiplier == 3.0
-    assert cfg.position.runner_mode.weak_trend_trailing_atr == 2.4
+    assert cfg.position.runner_mode.weak_trend_trailing_atr == 2.0
     assert cfg.position.runner_mode.strong_trend_trailing_atr == 2.8
     assert cfg.position.runner_mode.very_strong_trend_trailing_atr == 3.2
     assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
+    assert cfg.stagnation_exit.pre_breakout_scout.max_bars_without_breakout == 10
+    assert cfg.stagnation_exit.pre_breakout_scout.min_progress_r == 0.4
+    assert cfg.stagnation_exit.breakout_confirm.reduce_after_bars == 7
+    assert cfg.stagnation_exit.breakout_confirm.max_bars_without_1r == 14
+    assert cfg.stagnation_exit.retest_confirm.tighten_after_bars == 8
+    assert cfg.stagnation_exit.retest_confirm.max_bars_without_1r == 16
     assert cfg.risk.scout_max_stop_distance_atr == 3.5
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.scout_max_leverage == 6
@@ -87,6 +93,13 @@ def test_defaults_when_empty(tmp_path):
     p.write_text("", encoding="utf-8")
     cfg = load_app_config(p)
     assert cfg.bot.mode == BotMode.PAPER
+    assert cfg.entry.pre_breakout.position_fraction == 0.40
+    assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
+    assert cfg.entry.pre_breakout.compression_min_score == 5
+    assert cfg.entry.pre_breakout.long_rsi_min == 44
+    assert cfg.entry.pre_breakout.short_rsi_min == 32
+    assert cfg.orders.max_slippage_percent == 0.08
+    assert cfg.orders.scout_limit_order_ttl_sec == 45
 
 
 def test_missing_file_raises():

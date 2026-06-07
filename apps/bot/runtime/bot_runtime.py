@@ -957,21 +957,21 @@ class BotRuntime:
             return None
 
         # otherwise consider a new entry
+        meta = self._universe.get(symbol) if self._universe else None
+        if meta is None:
+            return None
         market = MarketContext(
             now_ms=now_ms,
             last_kline_ms=self._collector.last_kline_ms(symbol, "1"),
             last_ticker_ms=self._collector.last_ticker_ms(),
             missing_candles=self._collector.missing_candles(symbol, "1"),
             ticker_price=ticker.last_price, kline_close=s1.close,
-            symbol_status="Trading",
+            symbol_status=meta.status,
             next_funding_time_ms=ticker.next_funding_time_ms,
             funding_rate=ticker.funding_rate,
         )
         box_high = s1.swing_high or ticker.last_price
         box_low = s1.swing_low or ticker.last_price
-        meta = self._universe.get(symbol) if self._universe else None
-        if meta is None:
-            return None
 
         async def load_orderbook():
             ob = await self._collector.refresh_orderbook(symbol)

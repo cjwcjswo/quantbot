@@ -281,7 +281,7 @@ class EntryTimingEngine:
         if vol is None:
             return "VOLUME_MISSING"
         cq = self.cfg.candle_quality
-        min_vr = Decimal(str(self.cfg.volume.min_breakout_volume_ratio))
+        min_vr = Decimal(str(self.cfg.entry.breakout_confirm.volume_min_ratio))
         max_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
         if vol < min_vr:
             return "VOLUME_TOO_LOW"
@@ -653,18 +653,16 @@ class EntryTimingEngine:
         scout = self.cfg.entry.pre_breakout
         atr20 = avg_true_range(ctx.candles_1m, 20)
         atr100 = avg_true_range(ctx.candles_1m, 100)
+        ratio = atr20 / atr100 if atr20 is not None and atr100 and atr100 > 0 else None
         has_compression = (
-            atr20 is not None
-            and atr100 is not None
-            and atr100 > 0
-            and atr20 < atr100
+            ratio is not None
+            and ratio <= Decimal(str(scout.score_compression_ratio))
         )
         bonus = (
             Decimal(str(scout.compression_bonus_score))
             if has_compression
             else Decimal("0")
         )
-        ratio = atr20 / atr100 if atr20 is not None and atr100 and atr100 > 0 else None
         return ScoutCompression(
             has_compression=has_compression,
             bonus_applied=bonus,

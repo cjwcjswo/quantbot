@@ -231,7 +231,7 @@ position:
     enabled: true
     activate_after_partial_tp: true
     activate_min_r: 2.0
-    weak_trend_trailing_atr: 2.4
+    weak_trend_trailing_atr: 2.0
     strong_trend_trailing_atr: 2.8
     very_strong_trend_trailing_atr: 3.2
     strong_trend_min_r: 2.0
@@ -272,14 +272,15 @@ position:
 stagnation_exit:
   enabled: true
   pre_breakout_scout:
-    max_bars_without_breakout: 8
+    max_bars_without_breakout: 10
+    min_progress_r: 0.4
   breakout_confirm:
-    reduce_after_bars: 5
+    reduce_after_bars: 7
     reduce_fraction: 0.5
-    max_bars_without_1r: 10
+    max_bars_without_1r: 14
   retest_confirm:
-    tighten_after_bars: 6
-    max_bars_without_1r: 12
+    tighten_after_bars: 8
+    max_bars_without_1r: 16
 
 cooldown:
   symbol_cooldown_after_loss_min: 15

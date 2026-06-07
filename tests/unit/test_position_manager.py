@@ -104,18 +104,60 @@ def test_max_holding_exit(config):
 def test_stagnation_breakout_reduce_then_close(config):
     pm = PositionManager(config)
     pos = _pos(mode=EntryMode.BREAKOUT_CONFIRM, bars=4)
-    # bar -> bars=5, max_r < 0.5 => REDUCE 50%
+    # bar -> bars=5: old policy would reduce, new entry-mode timing delays it.
+    actions = pm.evaluate(pos, price=Decimal("100"), atr=Decimal("1"),
+                          candle_1m=candle(h="100.1", l="99.9", c="100"))
+    assert actions[0].type == PositionActionType.SCOUT_EVENT
+    assert actions[0].event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    assert actions[0].data["reason"] == "BREAKOUT_REDUCE_DELAYED"
+    # bar -> bars=7, max_r < 0.5 => REDUCE 50%
+    pos.bars_since_entry = 6
     actions = pm.evaluate(pos, price=Decimal("100"), atr=Decimal("1"),
                           candle_1m=candle(h="100.1", l="99.9", c="100"))
     assert actions[0].type == PositionActionType.REDUCE
     assert actions[0].event_type == "STAGNATION_REDUCE"
     assert actions[0].data["reason"] == "STAGNATION"
-    # advance to bars >= 10 without 1R => EXIT STAGNATION
-    pos.bars_since_entry = 9
+    # advance to bars >= 14 without 1R => EXIT STAGNATION
+    pos.bars_since_entry = 13
     actions = pm.evaluate(pos, price=Decimal("100"), atr=Decimal("1"),
                           candle_1m=candle(h="100.1", l="99.9", c="100"))
     assert actions[0].type == PositionActionType.EXIT
     assert actions[0].reason == ExitReason.STAGNATION
+
+
+def test_stagnation_retest_delays_then_tightens_then_closes(config):
+    pm = PositionManager(config)
+    pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=5)
+
+    delayed = pm.evaluate(
+        pos,
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="100.1", l="99.9", c="100"),
+    )
+    assert delayed[0].type == PositionActionType.SCOUT_EVENT
+    assert delayed[0].event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    assert delayed[0].data["reason"] == "RETEST_TIGHTEN_DELAYED"
+
+    pos.bars_since_entry = 7
+    tightened = pm.evaluate(
+        pos,
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="100.1", l="99.9", c="100"),
+    )
+    assert tightened[0].type == PositionActionType.TRAIL_UPDATE
+    assert tightened[0].new_stop == Decimal("99.5")
+
+    pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=15)
+    closed = pm.evaluate(
+        pos,
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        candle_1m=candle(h="100.1", l="99.9", c="100"),
+    )
+    assert closed[0].type == PositionActionType.EXIT
+    assert closed[0].reason == ExitReason.STAGNATION
 
 
 def test_scenario_invalid_reduce_then_exit(config):
@@ -366,7 +408,7 @@ def test_scout_stagnation_counts_unique_1m_candles_not_evaluations(config):
     assert pos.bars_since_entry == 1
 
     last_actions = []
-    for i in range(2, 9):
+    for i in range(2, 11):
         last_actions = pm.evaluate(
             pos,
             price=Decimal("101.6"),
@@ -381,9 +423,28 @@ def test_scout_stagnation_counts_unique_1m_candles_not_evaluations(config):
             volume_ratio=Decimal("0.5"),
         )
 
-    assert pos.bars_since_entry == 8
+    assert pos.bars_since_entry == 10
     assert last_actions[-1].type == PositionActionType.EXIT
     assert last_actions[-1].reason == ExitReason.STAGNATION
+
+
+def test_scout_stagnation_keeps_position_when_min_progress_reached(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=9)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("99.55"),
+        atr=Decimal("1"),
+        candle_1m=candle(o="99.7", h="99.8", l="99.4", c="99.55"),
+        volume_ratio=Decimal("0.5"),
+    )
+
+    assert pos.status == PositionStatus.ACTIVE
+    assert [a.event_type for a in actions if a.event_type] == [
+        "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    ]
+    assert actions[0].data["reason"] == "SCOUT_STAGNATION_DELAYED"
 
 
 def test_active_trend_scout_uses_general_scenario_invalid(config):
@@ -488,7 +549,7 @@ def test_runner_very_strong_uses_3_2_atr(config):
     assert pos.stop_loss_price == Decimal("102.8")
 
 
-def test_runner_weak_trend_uses_2_4_atr(config):
+def test_runner_weak_trend_uses_2_0_atr(config):
     pm = PositionManager(config)
     pos = _pos()
     pos.partial_tp_done = True
@@ -504,8 +565,8 @@ def test_runner_weak_trend_uses_2_4_atr(config):
     )
 
     assert pos.runner_trend_strength == "WEAK"
-    assert pos.runner_trailing_atr_multiplier == Decimal("2.4")
-    assert pos.stop_loss_price == Decimal("100.6")
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
+    assert pos.stop_loss_price == Decimal("101")
 
 
 def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
@@ -551,7 +612,7 @@ def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
         snapshot_5m=hold_5m,
     )
     assert pos.runner_trend_strength == "WEAK"
-    assert pos.runner_trailing_atr_multiplier == Decimal("2.4")
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
 
 
 def test_runner_long_stop_never_moves_against_position(config):
@@ -629,7 +690,7 @@ def test_runner_disables_stagnation_exit(config):
     pos.runner_mode_active = True
     pos.partial_tp_done = True
     pos.runner_trend_strength = "WEAK"
-    pos.runner_trailing_atr_multiplier = Decimal("2.4")
+    pos.runner_trailing_atr_multiplier = Decimal("2.0")
 
     actions = pm.evaluate(
         pos,

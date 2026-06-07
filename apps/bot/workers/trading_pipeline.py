@@ -817,6 +817,7 @@ class TradingService:
         """
         signals = self._signals.generate(symbol, snapshots)
         margin = Decimal(str(self.cfg.entry.breakout_confirm.close_beyond_boundary_atr))
+        scout = self.cfg.entry.pre_breakout
         return build_watch_entry(
             symbol=symbol,
             signal=signals[0] if signals else None,
@@ -826,6 +827,8 @@ class TradingService:
             box_low=box_low,
             last_price=last_price,
             breakout_margin_atr=margin,
+            near_zone_atr=Decimal(str(scout.score_near_box_atr)),
+            scout_zone_atr=Decimal(str(scout.max_distance_to_box_atr)),
         )
 
     async def close_position(

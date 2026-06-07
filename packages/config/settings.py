@@ -112,21 +112,21 @@ class EntryEnabledModes(_Section):
 
 class PreBreakoutEntry(_Section):
     min_score: int = 6
-    position_fraction: float = 0.30
+    position_fraction: float = 0.40
     stop_atr: float = 0.7
     min_stop_distance_percent: float = 0.45
     min_volume_ratio: float = 0.80
-    max_distance_to_box_atr: float = 0.45
+    max_distance_to_box_atr: float = 0.65
     require_compression: bool = False
     compression_bonus_score: int = 2
-    compression_min_score: int | None = 6
+    compression_min_score: int | None = 5
     no_compression_min_score: int | None = 7
     compression_position_fraction: float | None = 0.50
     no_compression_position_fraction: float | None = 0.15
-    long_rsi_min: float = 46
-    long_rsi_max: float = 64
-    short_rsi_min: float = 36
-    short_rsi_max: float = 54
+    long_rsi_min: float = 44
+    long_rsi_max: float = 68
+    short_rsi_min: float = 32
+    short_rsi_max: float = 58
     score_gap_high_percent_15m: float = 0.30
     score_slope_high_atr_15m: float = 0.10
     score_long_rsi_center_min: float = 50
@@ -212,9 +212,9 @@ class OrdersSection(_Section):
     scout_order_type: str = "LIMIT"
     breakout_order_type: str = "AGGRESSIVE_LIMIT"
     retest_order_type: str = "LIMIT"
-    max_slippage_percent: float = 0.05
+    max_slippage_percent: float = 0.08
     limit_order_ttl_sec: int = 10
-    scout_limit_order_ttl_sec: int = 30
+    scout_limit_order_ttl_sec: int = 45
     retest_limit_order_ttl_sec: int = 20
     limit_reorder_attempts: int = 1
     aggressive_limit_time_in_force: str = "IOC"
@@ -302,7 +302,7 @@ class RunnerModeSection(_Section):
     enabled: bool = True
     activate_after_partial_tp: bool = True
     activate_min_r: float = 2.0
-    weak_trend_trailing_atr: float = 2.4
+    weak_trend_trailing_atr: float = 2.0
     strong_trend_trailing_atr: float = 2.8
     very_strong_trend_trailing_atr: float = 3.2
     strong_trend_min_r: float = 2.0
@@ -334,18 +334,19 @@ class PositionSection(_Section):
 
 
 class StagnationScout(_Section):
-    max_bars_without_breakout: int = 8
+    max_bars_without_breakout: int = 10
+    min_progress_r: float = 0.4
 
 
 class StagnationBreakout(_Section):
-    reduce_after_bars: int = 5
+    reduce_after_bars: int = 7
     reduce_fraction: float = 0.5
-    max_bars_without_1r: int = 10
+    max_bars_without_1r: int = 14
 
 
 class StagnationRetest(_Section):
-    tighten_after_bars: int = 6
-    max_bars_without_1r: int = 12
+    tighten_after_bars: int = 8
+    max_bars_without_1r: int = 16
 
 
 class StagnationExitSection(_Section):

@@ -169,6 +169,12 @@ async def test_blocked_by_funding_window(config):
     assert await service.evaluate_entry(**_entry_kwargs(market)) is None
 
 
+async def test_blocked_by_non_trading_symbol_status(config):
+    service = await _paper_service(config)
+    market = MarketContext(symbol_status="PreLaunch")
+    assert await service.evaluate_entry(**_entry_kwargs(market)) is None
+
+
 async def test_blocked_by_symbol_cooldown(config):
     cd = CooldownTracker(config.cooldown)
     from packages.core.enums import EntryMode
@@ -261,6 +267,32 @@ async def test_orderbook_not_loaded_without_signal(config):
         orderbook_provider=load_orderbook,
     ) is None
     assert calls["n"] == 0
+
+
+async def test_watch_preview_uses_configured_scout_zone(config):
+    service = await _paper_service(config)
+    snapshots = _snapshots()
+    snapshots["1"] = snap(
+        timeframe="1",
+        close="99.5",
+        ema20="99",
+        atr="1",
+        atr_percent="1.0",
+        rsi="55",
+        volume_ratio="1.0",
+    )
+
+    preview = service.preview_watch(
+        symbol="BTCUSDT",
+        snapshots=snapshots,
+        box_high=Decimal("100"),
+        box_low=Decimal("98"),
+        last_price=Decimal("99.5"),
+    )
+
+    assert preview["direction"] == "LONG"
+    assert preview["distance_atr"] == "0.5"
+    assert preview["readiness"] == "SCOUT_ZONE"
 
 
 async def test_paper_entry_passes_with_no_guards(config):

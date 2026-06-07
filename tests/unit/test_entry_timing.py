@@ -64,6 +64,30 @@ def test_healthy_breakout_returns_breakout_confirm(config):
     assert decision.stop_atr == Decimal("1.0")
 
 
+def test_breakout_volume_threshold_uses_entry_config(config):
+    config.entry.breakout_confirm.volume_min_ratio = 1.2
+    config.volume.min_breakout_volume_ratio = 9.0
+    candles = _flat(5, price="100")
+    candles.append(candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0"))
+
+    decision = EntryTimingEngine(config).evaluate(
+        _ctx(candles_1m=candles, box_high="100", s1_kwargs={"volume_ratio": "1.5"})
+    )
+
+    assert decision is not None
+    assert decision.entry_mode == EntryMode.BREAKOUT_CONFIRM
+
+    config.entry.breakout_confirm.volume_min_ratio = 2.0
+    blocked = EntryTimingEngine(config)
+    decision = blocked.evaluate(
+        _ctx(candles_1m=candles, box_high="100", s1_kwargs={"volume_ratio": "1.5"})
+    )
+
+    assert decision is None
+    assert blocked.last_no_entry_reason["reason_code"] == "BREAKOUT_NOT_HEALTHY"
+    assert blocked.last_no_entry_reason["breakout_quality_reason"] == "VOLUME_TOO_LOW"
+
+
 def test_exhaustion_breakout_then_retest(config):
     eng = EntryTimingEngine(config)
     candles = _flat(5, price="100")
@@ -256,6 +280,33 @@ def _scout_candles_no_compression():
                    o=opn, h=hi, l=lo, c=cl)
         )
     return candles
+
+
+def _scout_candles_loose_compression():
+    candles = []
+    for i in range(100):
+        candles.append(
+            candle(interval="1", open_time_ms=i * 60_000,
+                   o="100", h="100.5", l="99.5", c="100")
+        )
+    for i in range(100, 120):
+        candles.append(
+            candle(interval="1", open_time_ms=i * 60_000,
+                   o="100", h="100.45", l="99.55", c="100")
+        )
+    return candles
+
+
+def test_scout_compression_respects_configured_ratio(config):
+    config.entry.pre_breakout.score_compression_ratio = 0.8
+    eng = EntryTimingEngine(config)
+    compression = eng._scout_compression(
+        _ctx(candles_1m=_scout_candles_loose_compression())
+    )
+
+    assert Decimal("0.8") < compression.ratio < Decimal("1")
+    assert compression.has_compression is False
+    assert compression.mode == "WITHOUT_COMPRESSION"
 
 
 def test_scout_entry(config):
