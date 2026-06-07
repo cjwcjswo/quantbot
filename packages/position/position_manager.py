@@ -62,6 +62,8 @@ class PositionManager:
         self._break_level_fail_closes: dict[str, int] = {}
         self._scout_ema_reclaim_counts: dict[str, int] = {}
         self._runner_ema_break_counts: dict[str, int] = {}
+        self._runner_weak_signal_counts: dict[str, int] = {}
+        self._runner_weak_signal_open_times: dict[str, int] = {}
 
     def mark_active_paper(self, position: Position) -> None:
         """PAPER positions become ACTIVE once virtual fill + SL/TP stored (§14.1)."""
@@ -129,6 +131,21 @@ class PositionManager:
             now=now,
         )
 
+        actions: list[PositionAction] = list(prefix_actions) + runner_events
+
+        # 2. partial take-profit (§14.2). Take profit before trailing checks so
+        # the first +2R touch cannot skip the planned half close.
+        if not position.partial_tp_done and r >= self.partial_r:
+            position.partial_tp_done = True
+            actions.append(
+                PositionAction(
+                    type=PositionActionType.PARTIAL_TP,
+                    qty=self._round_qty(position.qty * self.partial_fraction),
+                    reason=ExitReason.PARTIAL_TAKE_PROFIT,
+                )
+            )
+            return actions
+
         # 2. trailing stop breach (§14.3)
         if max_r >= self.trailing_start_r:
             position.trailing_active = True
@@ -178,7 +195,15 @@ class PositionManager:
                     self._exit(position, ExitReason.RUNNER_SCENARIO_INVALID),
                 ]
             )
-        scenario = self._scenario_action(position, r, snapshot_5m, candle_1m, volume_ratio)
+        scenario = self._scenario_action(
+            position,
+            r,
+            snapshot_5m,
+            candle_1m,
+            volume_ratio,
+            price=price,
+            atr=atr,
+        )
         if scenario is not None:
             return prefix_actions + runner_events + [scenario]
 
@@ -189,23 +214,8 @@ class PositionManager:
         if stagnation is not None:
             return prefix_actions + runner_events + [stagnation]
 
-        actions: list[PositionAction] = list(prefix_actions) + runner_events
-
-        # 5. partial take-profit (§14.2)
-        partial_requested = False
-        if not position.partial_tp_done and r >= self.partial_r:
-            position.partial_tp_done = True
-            partial_requested = True
-            actions.append(
-                PositionAction(
-                    type=PositionActionType.PARTIAL_TP,
-                    qty=self._round_qty(position.qty * self.partial_fraction),
-                    reason=ExitReason.PARTIAL_TAKE_PROFIT,
-                )
-            )
-
         # 6. trailing-stop ratchet update
-        if position.trailing_active and not partial_requested:
+        if position.trailing_active:
             trail_stop = self._trail_stop(position, atr, max_r)
             new_stop = self._ratchet(position, trail_stop)
             if new_stop is not None and self._runner_trailing_update_allowed(
@@ -347,6 +357,12 @@ class PositionManager:
             volume_ratio=volume_ratio,
         )
         old = position.runner_trend_strength
+        if self._runner_weak_downgrade_pending(
+            position, old=old, strength=strength, reason=reason, candle=candle
+        ):
+            return []
+        if strength != "WEAK":
+            self._clear_runner_weak_signal(position.symbol)
         position.runner_trend_strength = strength
         position.runner_trailing_atr_multiplier = self._runner_multiplier(strength)
         if old is None or old == strength:
@@ -362,6 +378,51 @@ class PositionManager:
                 reason=reason or f"{old}_TO_{strength}",
             )
         ]
+
+    def _runner_weak_downgrade_pending(
+        self,
+        position: Position,
+        *,
+        old: str | None,
+        strength: str,
+        reason: str | None,
+        candle: Candle | None,
+    ) -> bool:
+        if old not in {"STRONG", "VERY_STRONG"} or strength != "WEAK":
+            return False
+        if reason in {"ONE_MIN_EMA20_BREAK", "STRONG_OPPOSITE_CANDLE"}:
+            self._clear_runner_weak_signal(position.symbol)
+            return False
+
+        required = max(
+            1,
+            int(self.cfg.position.runner_mode.tighten_on_1m_ema20_break_bars),
+        )
+        if required <= 1:
+            return False
+
+        symbol = position.symbol
+        open_time = candle.open_time_ms if candle is not None else None
+        if open_time is not None and open_time > 0:
+            last_open_time = self._runner_weak_signal_open_times.get(symbol)
+            if last_open_time != open_time:
+                self._runner_weak_signal_open_times[symbol] = open_time
+                self._runner_weak_signal_counts[symbol] = (
+                    self._runner_weak_signal_counts.get(symbol, 0) + 1
+                )
+        else:
+            self._runner_weak_signal_counts[symbol] = (
+                self._runner_weak_signal_counts.get(symbol, 0) + 1
+            )
+
+        if self._runner_weak_signal_counts.get(symbol, 0) < required:
+            return True
+        self._clear_runner_weak_signal(symbol)
+        return False
+
+    def _clear_runner_weak_signal(self, symbol: str) -> None:
+        self._runner_weak_signal_counts.pop(symbol, None)
+        self._runner_weak_signal_open_times.pop(symbol, None)
 
     def _runner_trend_strength(
         self,
@@ -1163,6 +1224,48 @@ class PositionManager:
                 return trail_stop
         return None
 
+    def _management_event_data(
+        self,
+        position: Position,
+        *,
+        price: Decimal,
+        atr: Decimal,
+        r: Decimal,
+        candle: Candle | None,
+        snapshot_5m: IndicatorSnapshot | None,
+        volume_ratio: Decimal | None,
+        reason: str,
+    ) -> dict:
+        body_ratio = None
+        close_position = None
+        if candle is not None:
+            m = metrics_of(candle)
+            if m.valid:
+                body_ratio = str(m.body_ratio)
+                close_position = str(m.close_position_in_range)
+        return {
+            "symbol": position.symbol,
+            "side": position.side.value,
+            "entry_price": str(position.avg_entry_price),
+            "current_price": str(price),
+            "entry_mode": position.entry_mode.value if position.entry_mode else None,
+            "qty": str(position.qty),
+            "current_r": str(r),
+            "bars_since_entry": position.bars_since_entry,
+            "atr": str(atr),
+            "volume_ratio": str(volume_ratio) if volume_ratio is not None else None,
+            "candle_close": str(candle.close) if candle is not None else None,
+            "body_ratio": body_ratio,
+            "close_position_in_range": close_position,
+            "snapshot_5m_close": str(snapshot_5m.close)
+            if snapshot_5m is not None
+            else None,
+            "snapshot_5m_ema20": str(snapshot_5m.ema20)
+            if snapshot_5m is not None and snapshot_5m.ema20 is not None
+            else None,
+            "reason": reason,
+        }
+
     def _scenario_action(
         self,
         position: Position,
@@ -1170,6 +1273,9 @@ class PositionManager:
         snapshot_5m: IndicatorSnapshot | None,
         candle: Candle | None,
         volume_ratio: Decimal | None,
+        *,
+        price: Decimal,
+        atr: Decimal,
     ) -> PositionAction | None:
         # Already in the post-invalidation recovery window?
         if position.symbol in self._scenario_recovery:
@@ -1190,6 +1296,17 @@ class PositionManager:
                 type=PositionActionType.REDUCE,
                 qty=self._round_qty(position.qty * Decimal("0.5")),
                 reason=ExitReason.SCENARIO_INVALID,
+                event_type="SCENARIO_INVALID_REDUCE",
+                data=self._management_event_data(
+                    position,
+                    price=price,
+                    atr=atr,
+                    r=r,
+                    candle=candle,
+                    snapshot_5m=snapshot_5m,
+                    volume_ratio=volume_ratio,
+                    reason="SCENARIO_INVALID",
+                ),
             )
         return None
 
@@ -1261,6 +1378,18 @@ class PositionManager:
                     type=PositionActionType.REDUCE,
                     qty=self._round_qty(position.qty * Decimal(str(se.breakout_confirm.reduce_fraction))),
                     reason=ExitReason.STAGNATION,
+                    event_type="STAGNATION_REDUCE",
+                    data={
+                        "symbol": position.symbol,
+                        "side": position.side.value,
+                        "entry_price": str(position.avg_entry_price),
+                        "entry_mode": mode.value if mode is not None else None,
+                        "qty": str(position.qty),
+                        "reduce_fraction": str(se.breakout_confirm.reduce_fraction),
+                        "bars_since_entry": bars,
+                        "max_r": str(max_r),
+                        "reason": "STAGNATION",
+                    },
                 )
         elif mode == EntryMode.RETEST_CONFIRM:
             if bars >= se.retest_confirm.max_bars_without_1r and max_r < Decimal("1.0"):

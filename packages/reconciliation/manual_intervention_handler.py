@@ -196,10 +196,15 @@ class ManualInterventionHandler:
     async def handle_bot_exchange_close(self, internal: Position) -> None:
         """Bot-managed position is already flat on Bybit, usually by exchange SL."""
         prev_qty = internal.qty
+        exit_price = self._estimated_exchange_exit_price(internal)
+        realized_remaining = self._estimated_realized_pnl(
+            internal, exit_price=exit_price, qty=prev_qty
+        )
         internal.status = PositionStatus.CLOSED
         internal.qty = Decimal("0")
         internal.closed_at = datetime.now(timezone.utc)
         internal.exit_reason = self._exchange_protection_exit_reason(internal)
+        internal.realized_pnl += realized_remaining
         if internal.runner_mode_active:
             await self._events.publish(
                 BotEvent(
@@ -220,6 +225,8 @@ class ManualInterventionHandler:
                         "new_trailing_stop": str(internal.stop_loss_price)
                         if internal.stop_loss_price is not None
                         else None,
+                        "estimated_exit_price": str(exit_price),
+                        "estimated_realized_pnl": str(realized_remaining),
                         "reason": internal.exit_reason.value,
                         "source": "exchange_protection",
                     },
@@ -234,11 +241,41 @@ class ManualInterventionHandler:
                     "prev_qty": str(prev_qty),
                     "reason": internal.exit_reason.value,
                     "source": "exchange_protection",
+                    "estimated_exit_price": str(exit_price),
+                    "estimated_realized_pnl": str(realized_remaining),
                 },
             )
         )
         if self._logger is not None:
             await self._logger.log_position(internal, mode="LIVE")
+            r_mult = None
+            if (
+                prev_qty > 0
+                and internal.initial_risk_per_unit
+                and internal.initial_risk_per_unit > 0
+            ):
+                r_mult = str(
+                    internal.realized_pnl / (internal.initial_risk_per_unit * prev_qty)
+                )
+            await self._logger.log_trade(
+                symbol=internal.symbol,
+                side=internal.side.value,
+                qty=str(prev_qty),
+                entry_price=str(internal.avg_entry_price),
+                exit_price=str(exit_price),
+                realized_pnl=str(internal.realized_pnl),
+                exit_reason=internal.exit_reason.value,
+                strategy_id=internal.strategy_id or None,
+                entry_mode=internal.entry_mode.value if internal.entry_mode else None,
+                mode="LIVE",
+                leverage=str(internal.leverage),
+                fees=str(internal.fees_paid),
+                gross_pnl=str(internal.realized_pnl + internal.fees_paid),
+                net_pnl=str(internal.realized_pnl),
+                r_multiple=r_mult,
+                opened_at=internal.opened_at,
+                closed_at=internal.closed_at,
+            )
 
     @staticmethod
     def _exchange_protection_exit_reason(internal: Position) -> ExitReason:
@@ -247,3 +284,14 @@ class ManualInterventionHandler:
         if internal.trailing_active:
             return ExitReason.TRAILING_STOP
         return ExitReason.STOP_LOSS
+
+    @staticmethod
+    def _estimated_exchange_exit_price(internal: Position) -> Decimal:
+        return internal.stop_loss_price or internal.avg_entry_price
+
+    @staticmethod
+    def _estimated_realized_pnl(
+        internal: Position, *, exit_price: Decimal, qty: Decimal
+    ) -> Decimal:
+        direction = Decimal("1") if internal.side.value == "LONG" else Decimal("-1")
+        return (exit_price - internal.avg_entry_price) * qty * direction

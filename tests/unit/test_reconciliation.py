@@ -34,6 +34,19 @@ class _PersistedPositionCleanupLogger:
         self.manual_intervention = (symbol, kind, data)
 
 
+class _ExchangeCloseLogger(_PersistedPositionCleanupLogger):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.positions = []
+        self.trades = []
+
+    async def log_position(self, position, mode=None, protection_status=None):
+        self.positions.append((position, mode, protection_status))
+
+    async def log_trade(self, **kwargs):
+        self.trades.append(kwargs)
+
+
 def _make(config, events, trade_logger=None):
     state = RuntimeState()
     bus = EventBus(redis=None, sink=events)
@@ -246,9 +259,11 @@ async def test_bot_exchange_protection_order_not_flagged_external(config, events
 
 
 async def test_bot_exchange_initial_sl_close_marked_stop_loss(config, events):
-    state, _gw, recon = _make(config, events)
+    logger = _ExchangeCloseLogger()
+    state, _gw, recon = _make(config, events, trade_logger=logger)
     pos = _bot_position()
     pos.stop_loss_price = Decimal("99")
+    pos.initial_risk_per_unit = Decimal("1")
     pos.trailing_active = False
     state.positions[pos.symbol] = pos
 
@@ -256,9 +271,15 @@ async def test_bot_exchange_initial_sl_close_marked_stop_loss(config, events):
 
     assert pos.status == PositionStatus.CLOSED
     assert pos.exit_reason == ExitReason.STOP_LOSS
+    assert pos.realized_pnl == Decimal("-1")
     assert pos.symbol in result.exchange_closes
     closed = events.of_type(BotEventType.POSITION_CLOSED)[-1]
     assert closed.data["reason"] == "STOP_LOSS"
+    assert closed.data["estimated_exit_price"] == "99"
+    assert len(logger.trades) == 1
+    assert logger.trades[0]["exit_reason"] == "STOP_LOSS"
+    assert logger.trades[0]["exit_price"] == "99"
+    assert logger.trades[0]["realized_pnl"] == "-1"
 
 
 async def test_known_order_not_flagged_external(config, events):

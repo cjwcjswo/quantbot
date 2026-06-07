@@ -108,6 +108,8 @@ def test_stagnation_breakout_reduce_then_close(config):
     actions = pm.evaluate(pos, price=Decimal("100"), atr=Decimal("1"),
                           candle_1m=candle(h="100.1", l="99.9", c="100"))
     assert actions[0].type == PositionActionType.REDUCE
+    assert actions[0].event_type == "STAGNATION_REDUCE"
+    assert actions[0].data["reason"] == "STAGNATION"
     # advance to bars >= 10 without 1R => EXIT STAGNATION
     pos.bars_since_entry = 9
     actions = pm.evaluate(pos, price=Decimal("100"), atr=Decimal("1"),
@@ -126,6 +128,8 @@ def test_scenario_invalid_reduce_then_exit(config):
                      candle_1m=flat, snapshot_5m=invalid_5m)
     assert a1[0].type == PositionActionType.REDUCE
     assert a1[0].reason == ExitReason.SCENARIO_INVALID
+    assert a1[0].event_type == "SCENARIO_INVALID_REDUCE"
+    assert a1[0].data["reason"] == "SCENARIO_INVALID"
     # 3 bars without +0.5R recovery => EXIT
     last = None
     for _ in range(3):
@@ -150,6 +154,7 @@ def test_scenario_invalid_after_two_closes_below_breakout_level(config):
     )
     assert second[0].type == PositionActionType.REDUCE
     assert second[0].reason == ExitReason.SCENARIO_INVALID
+    assert second[0].event_type == "SCENARIO_INVALID_REDUCE"
 
 
 def test_scout_pending_grace_skips_general_scenario_invalid(config):
@@ -397,6 +402,7 @@ def test_active_trend_scout_uses_general_scenario_invalid(config):
 
     assert actions[0].type == PositionActionType.REDUCE
     assert actions[0].reason == ExitReason.SCENARIO_INVALID
+    assert actions[0].event_type == "SCENARIO_INVALID_REDUCE"
 
 
 def test_external_position_not_managed(config):
@@ -500,6 +506,52 @@ def test_runner_weak_trend_uses_2_0_atr(config):
     assert pos.runner_trend_strength == "WEAK"
     assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
     assert pos.stop_loss_price == Decimal("101")
+
+
+def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
+    pm = PositionManager(config)
+    pos = _pos()
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("2.8")
+    pos.highest_price = Decimal("104")
+
+    first_bar = candle(open_time_ms=60_000, h="104", l="101.8", c="102")
+    weak_rsi = snap(timeframe="1", close="102", ema20="101", rsi="49")
+    hold_5m = snap(timeframe="5", close="102", ema20="101")
+
+    pm.evaluate(
+        pos,
+        price=Decimal("102.3"),
+        atr=Decimal("1"),
+        candle_1m=first_bar,
+        snapshot_1m=weak_rsi,
+        snapshot_5m=hold_5m,
+    )
+    assert pos.runner_trend_strength == "STRONG"
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.8")
+
+    pm.evaluate(
+        pos,
+        price=Decimal("102.3"),
+        atr=Decimal("1"),
+        candle_1m=first_bar,
+        snapshot_1m=weak_rsi,
+        snapshot_5m=hold_5m,
+    )
+    assert pos.runner_trend_strength == "STRONG"
+
+    pm.evaluate(
+        pos,
+        price=Decimal("102.3"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=120_000, h="104", l="101.8", c="102"),
+        snapshot_1m=weak_rsi,
+        snapshot_5m=hold_5m,
+    )
+    assert pos.runner_trend_strength == "WEAK"
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
 
 
 def test_runner_long_stop_never_moves_against_position(config):
