@@ -12,6 +12,8 @@ def test_seed_and_get_confirmed_only():
     got = store.get("BTCUSDT", "5")
     assert len(got) == 5  # in-progress candle excluded
     assert all(c.confirmed for c in got)
+    assert store.current("BTCUSDT", "5") is not None
+    assert store.get_with_current("BTCUSDT", "5")[-1].confirmed is False
 
 
 def test_update_appends_new_confirmed():

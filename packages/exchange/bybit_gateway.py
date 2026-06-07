@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from decimal import Decimal
 
 from packages.core.enums import (
@@ -62,6 +63,13 @@ def _opt_dec(value: object) -> Decimal | None:
     if value is None or value == "" or value == "0":
         return None
     return Decimal(str(value))
+
+
+def _interval_ms(interval: str) -> int:
+    try:
+        return int(interval) * 60_000
+    except ValueError:
+        return 0
 
 
 def _is_order_missing_error(exc: Exception) -> bool:
@@ -208,20 +216,23 @@ class BybitExchangeGateway:
             limit=limit,
         )
         candles: list[Candle] = []
+        now_ms = int(time.time() * 1000)
+        step_ms = _interval_ms(interval)
         # Bybit returns newest-first; reverse to chronological order.
         for row in reversed(result.get("list", [])):
+            open_time_ms = int(row[0])
             candles.append(
                 Candle(
                     symbol=symbol,
                     interval=interval,
-                    open_time_ms=int(row[0]),
+                    open_time_ms=open_time_ms,
                     open=_dec(row[1]),
                     high=_dec(row[2]),
                     low=_dec(row[3]),
                     close=_dec(row[4]),
                     volume=_dec(row[5]),
                     turnover=_dec(row[6]) if len(row) > 6 else Decimal("0"),
-                    confirmed=True,
+                    confirmed=step_ms <= 0 or now_ms >= open_time_ms + step_ms,
                 )
             )
         return candles

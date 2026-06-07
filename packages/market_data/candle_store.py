@@ -33,7 +33,11 @@ class CandleStore:
         confirmed = [c for c in candles if c.confirmed]
         self._confirmed[key] = deque(confirmed[-self._max :], maxlen=self._max)
         self._gaps[key] = 0
-        self._current.pop(key, None)
+        current = next((c for c in reversed(candles) if not c.confirmed), None)
+        if current is None:
+            self._current.pop(key, None)
+        else:
+            self._current[key] = current
 
     def update(self, candle: Candle) -> None:
         """Ingest a candle (confirmed or in-progress) and track gaps."""
