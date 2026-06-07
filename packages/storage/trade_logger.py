@@ -15,7 +15,13 @@ from decimal import Decimal, InvalidOperation
 from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from packages.core.enums import OrderStatus, PositionStatus
+from packages.core.enums import (
+    EntryMode,
+    OrderStatus,
+    PositionSide,
+    PositionSource,
+    PositionStatus,
+)
 from packages.core.events import BotEvent, event_severity, should_persist_event
 from packages.core.models import Fill, Order, Position, Signal
 from packages.storage.models import (
@@ -55,6 +61,15 @@ def _qty_is_positive(value: str | None) -> bool:
         return Decimal(str(value)) > 0
     except (InvalidOperation, TypeError, ValueError):
         return True
+
+
+def _dec_or_none(value: str | None) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
 
 
 def _matches_live_mode(value: str | None, mode: str | None) -> bool:
@@ -299,6 +314,69 @@ class TradeLogger:
                 )
             session.add(row)
             await session.commit()
+
+    async def restore_open_bot_positions(
+        self, *, mode: str | None = "LIVE"
+    ) -> list[Position]:
+        """Load the latest persisted open BOT positions for runtime restart recovery."""
+
+        async with self._sf() as session:
+            rows = (await session.execute(
+                select(PositionRow).order_by(PositionRow.id.desc())
+            )).scalars().all()
+
+        positions: list[Position] = []
+        seen: set[str] = set()
+        for row in rows:
+            if row.symbol in seen:
+                continue
+            seen.add(row.symbol)
+            if row.status not in ("PENDING", "ACTIVE", "CLOSING"):
+                continue
+            if row.source != "BOT":
+                continue
+            if not _matches_live_mode(row.mode, mode):
+                continue
+            if not _qty_is_positive(row.qty):
+                continue
+
+            qty = _dec_or_none(row.qty)
+            avg_entry = _dec_or_none(row.avg_entry_price)
+            if qty is None or avg_entry is None:
+                continue
+            stop_loss = _dec_or_none(row.stop_loss_price)
+            take_profit = _dec_or_none(row.take_profit_price)
+            initial_risk = (
+                abs(avg_entry - stop_loss) if stop_loss is not None else None
+            )
+            try:
+                side = PositionSide(row.side)
+                status = PositionStatus(row.status)
+                entry_mode = EntryMode(row.entry_mode) if row.entry_mode else None
+            except ValueError:
+                continue
+            positions.append(
+                Position(
+                    symbol=row.symbol,
+                    side=side,
+                    status=status,
+                    source=PositionSource.BOT,
+                    qty=qty,
+                    avg_entry_price=avg_entry,
+                    manual_added_qty=_dec_or_none(row.manual_added_qty)
+                    or Decimal("0"),
+                    leverage=_dec_or_none(row.leverage) or Decimal("1"),
+                    stop_loss_price=stop_loss,
+                    take_profit_price=take_profit,
+                    initial_risk_per_unit=initial_risk,
+                    entry_mode=entry_mode,
+                    realized_pnl=_dec_or_none(row.realized_pnl) or Decimal("0"),
+                    unrealized_pnl=_dec_or_none(row.unrealized_pnl) or Decimal("0"),
+                    strategy_id=row.strategy_id or "",
+                    opened_at=row.opened_at or row.ts,
+                )
+            )
+        return positions
 
     async def close_stale_open_position_snapshots(
         self,

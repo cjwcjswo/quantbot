@@ -20,13 +20,14 @@ from packages.core.enums import (
     Side,
 )
 from packages.core.errors import RuntimeLockError
-from packages.core.models import Order, Position
+from packages.core.models import ExchangePosition, Order, Position
 from packages.messaging import (
     Command,
     CommandQueue,
     CommandType,
     state_keys,
 )
+from packages.storage import TradeLogger
 from tests.fakes import FakeGateway
 from tests.fakes.builders import candle, series_from_closes, symbol_meta, ticker
 
@@ -102,6 +103,47 @@ async def test_trading_graph_built_on_startup(redis):
     assert rt._trading is not None
     # empty universe (FakeGateway has no instruments) => nothing to watch, no crash
     assert rt._watch_symbols() == []
+    await rt.shutdown()
+
+
+async def test_startup_restores_persisted_bot_position_before_reconcile(
+    redis, session_factory
+):
+    tl = TradeLogger(session_factory)
+    await tl.log_position(
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            source=PositionSource.BOT,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+            stop_loss_price=Decimal("98"),
+            entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+        ),
+        mode="LIVE",
+        strategy_id="trend_following",
+    )
+    gw = FakeGateway()
+    gw.set_position(
+        ExchangePosition(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            size=Decimal("1"),
+            avg_price=Decimal("100"),
+            leverage=Decimal("1"),
+            stop_loss=Decimal("98"),
+        )
+    )
+    rt = _runtime(redis, gw, mode=BotMode.LIVE)
+    rt._trade_logger = tl
+
+    await rt.startup()
+
+    restored = rt.runtime_state.positions["BTCUSDT"]
+    assert restored.source == PositionSource.BOT
+    assert restored.initial_risk_per_unit == Decimal("2")
+    assert rt._last_reconciliation_status.get("external_positions") == []
     await rt.shutdown()
 
 

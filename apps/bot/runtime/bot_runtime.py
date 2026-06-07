@@ -292,6 +292,7 @@ class BotRuntime:
             )
 
         await self._redis.set(state_keys.BOT_MODE, self.config.bot.mode.value)
+        await self._restore_open_bot_positions()
         if self._universe is not None:
             await self._universe.refresh()
 
@@ -302,6 +303,23 @@ class BotRuntime:
         self.state_machine.transition(BotState.STANDBY, reason="boot complete")
         await self._heartbeat.beat_once()
         logger.info("BotRuntime in STANDBY; awaiting START command")
+
+    async def _restore_open_bot_positions(self) -> None:
+        if self.config.bot.mode != BotMode.LIVE or self._trade_logger is None:
+            return
+        restore = getattr(self._trade_logger, "restore_open_bot_positions", None)
+        if restore is None:
+            return
+        try:
+            positions = await restore(mode=self.config.bot.mode.value)
+        except Exception:
+            logger.exception("open bot position restore failed")
+            return
+        for position in positions:
+            if position.symbol not in self.runtime_state.positions:
+                self.runtime_state.positions[position.symbol] = position
+        if positions:
+            logger.info("Restored %s open bot position(s)", len(positions))
 
     def _register_order(self, order) -> None:
         key = order.client_order_id or order.order_id

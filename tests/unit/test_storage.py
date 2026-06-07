@@ -9,6 +9,7 @@ from packages.core.enums import (
     OrderStatus,
     OrderType,
     PositionSide,
+    PositionSource,
     PositionStatus,
     Side,
     SignalDirection,
@@ -152,6 +153,68 @@ async def test_log_closed_position_closes_previous_open_snapshots(session_factor
     assert {row.status for row in rows} == {"CLOSED"}
     assert {row.qty for row in rows} == {"0"}
     assert order.status == "CANCELLED"
+
+
+async def test_restore_open_bot_positions_uses_latest_live_bot_snapshot(session_factory):
+    tl = TradeLogger(session_factory)
+    await tl.log_position(
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+            stop_loss_price=Decimal("98"),
+            entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            leverage=Decimal("3"),
+        ),
+        mode="LIVE",
+        strategy_id="trend_following",
+    )
+    await tl.log_position(
+        Position(
+            symbol="BTCUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("0.5"),
+            avg_entry_price=Decimal("100"),
+            stop_loss_price=Decimal("99"),
+            entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            leverage=Decimal("3"),
+        ),
+        mode="LIVE",
+        strategy_id="trend_following",
+    )
+    await tl.log_position(
+        Position(
+            symbol="ETHUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            source=PositionSource.EXTERNAL,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+        ),
+        mode="LIVE",
+    )
+    await tl.log_position(
+        Position(
+            symbol="SOLUSDT",
+            side=PositionSide.LONG,
+            status=PositionStatus.ACTIVE,
+            qty=Decimal("1"),
+            avg_entry_price=Decimal("100"),
+        ),
+        mode="PAPER",
+    )
+
+    restored = await tl.restore_open_bot_positions(mode="LIVE")
+
+    assert [p.symbol for p in restored] == ["BTCUSDT"]
+    assert restored[0].qty == Decimal("0.5")
+    assert restored[0].source == PositionSource.BOT
+    assert restored[0].entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
+    assert restored[0].initial_risk_per_unit == Decimal("1")
+    assert restored[0].leverage == Decimal("3")
 
 
 async def test_close_stale_open_position_snapshots_keeps_active_and_paper(session_factory):
