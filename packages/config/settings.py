@@ -115,14 +115,14 @@ class PreBreakoutEntry(_Section):
     position_fraction: float = 0.30
     stop_atr: float = 0.7
     min_stop_distance_percent: float = 0.45
-    min_volume_ratio: float = 0.8
+    min_volume_ratio: float = 0.80
     max_distance_to_box_atr: float = 0.45
     require_compression: bool = False
     compression_bonus_score: int = 2
     compression_min_score: int | None = 6
     no_compression_min_score: int | None = 7
-    compression_position_fraction: float | None = 0.30
-    no_compression_position_fraction: float | None = 0.20
+    compression_position_fraction: float | None = 0.50
+    no_compression_position_fraction: float | None = 0.15
     long_rsi_min: float = 46
     long_rsi_max: float = 64
     short_rsi_min: float = 36
@@ -140,7 +140,7 @@ class PreBreakoutEntry(_Section):
 
 
 class BreakoutConfirmEntry(_Section):
-    position_fraction: float = 0.30
+    position_fraction: float = 0.60
     volume_min_ratio: float = 1.3
     require_close_beyond_boundary: bool = True
     close_beyond_boundary_atr: float = 0.03
@@ -148,7 +148,7 @@ class BreakoutConfirmEntry(_Section):
 
 
 class RetestConfirmEntry(_Section):
-    position_fraction: float = 0.40
+    position_fraction: float = 0.70
     retest_tolerance_atr: float = 0.35
     max_wait_candles: int = 10
     stop_atr: float = 1.3
@@ -226,18 +226,18 @@ class OrdersSection(_Section):
 
 
 class RiskSection(_Section):
-    account_risk_per_trade_percent: float = 1.0
+    account_risk_per_trade_percent: float = 1.8
     daily_max_loss_percent: float = 5.0
     intraday_drawdown_percent: float = 3.0
-    max_symbol_risk_percent: float = 1.0
-    max_total_open_risk_percent: float = 5.0
+    max_symbol_risk_percent: float = 2.0
+    max_total_open_risk_percent: float = 7.0
     max_same_direction_positions: int = 4
     min_leverage: int = 1
-    scout_max_leverage: int = 3
-    breakout_max_leverage: int = 5
-    retest_max_leverage: int = 6
-    high_quality_max_leverage: int = 8
-    high_atr_max_leverage: int = 3
+    scout_max_leverage: int = 6
+    breakout_max_leverage: int = 9
+    retest_max_leverage: int = 10
+    high_quality_max_leverage: int = 12
+    high_atr_max_leverage: int = 5
     high_atr_derisk_threshold_percent: float = 3.5
     consecutive_loss_derisk_count: int = 2
     consecutive_loss_max_leverage: int = 3

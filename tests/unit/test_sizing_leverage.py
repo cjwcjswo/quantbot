@@ -61,21 +61,21 @@ def test_max_leverage_by_mode(config):
     risk = config.risk
     assert max_leverage(entry_mode=EntryMode.PRE_BREAKOUT_SCOUT, atr_percent=Decimal("1"),
                         consecutive_losses=0, daily_loss_percent=Decimal("0"),
-                        config=risk) == Decimal("3")
+                        config=risk) == Decimal("6")
     assert max_leverage(entry_mode=EntryMode.BREAKOUT_CONFIRM, atr_percent=Decimal("1"),
                         consecutive_losses=0, daily_loss_percent=Decimal("0"),
-                        config=risk) == Decimal("5")
+                        config=risk) == Decimal("9")
     assert max_leverage(entry_mode=EntryMode.RETEST_CONFIRM, atr_percent=Decimal("1"),
                         consecutive_losses=0, daily_loss_percent=Decimal("0"),
-                        config=risk) == Decimal("6")
+                        config=risk) == Decimal("10")
 
 
 def test_max_leverage_derisk_rules(config):
     risk = config.risk
-    # high ATR caps to 3
+    # high ATR caps to 5
     assert max_leverage(entry_mode=EntryMode.RETEST_CONFIRM, atr_percent=Decimal("4.0"),
                         consecutive_losses=0, daily_loss_percent=Decimal("0"),
-                        config=risk) == Decimal("3")
+                        config=risk) == Decimal("5")
     # consecutive losses cap to 3
     assert max_leverage(entry_mode=EntryMode.RETEST_CONFIRM, atr_percent=Decimal("1"),
                         consecutive_losses=2, daily_loss_percent=Decimal("0"),

@@ -60,7 +60,7 @@ def test_healthy_breakout_returns_breakout_confirm(config):
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.BREAKOUT_CONFIRM
-    assert decision.position_fraction == Decimal("0.45")
+    assert decision.position_fraction == Decimal("0.60")
     assert decision.stop_atr == Decimal("1.0")
 
 
@@ -88,7 +88,7 @@ def test_exhaustion_breakout_then_retest(config):
     )
     assert decision is not None
     assert decision.entry_mode == EntryMode.RETEST_CONFIRM
-    assert decision.position_fraction == Decimal("0.55")
+    assert decision.position_fraction == Decimal("0.70")
     assert decision.stop_atr == Decimal("1.3")
 
 
@@ -268,7 +268,7 @@ def test_scout_entry(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.35")
+    assert decision.position_fraction == Decimal("0.50")
     assert decision.stop_atr == Decimal("0.8")
     assert decision.score >= Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
@@ -288,7 +288,7 @@ def test_scout_with_compression_score_6_allowed(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.35")
+    assert decision.position_fraction == Decimal("0.50")
     assert decision.score == Decimal("6")
     assert decision.required_score == Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
@@ -306,7 +306,7 @@ def test_scout_with_compression_score_5_allowed(config):
                             volume_ratio="1.0")
     decision = eng.evaluate(ctx)
     assert decision is not None
-    assert decision.position_fraction == Decimal("0.35")
+    assert decision.position_fraction == Decimal("0.50")
     assert decision.score == Decimal("5")
     assert decision.required_score == Decimal("5")
     assert decision.compression_mode == "WITH_COMPRESSION"
@@ -322,14 +322,14 @@ def test_scout_without_compression_score_7_allowed_smaller_fraction(config):
     decision = eng.evaluate(ctx)
     assert decision is not None
     assert decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-    assert decision.position_fraction == Decimal("0.25")
+    assert decision.position_fraction == Decimal("0.15")
     assert decision.score == Decimal("7")
-    assert decision.required_score == Decimal("6")
+    assert decision.required_score == Decimal("7")
     assert decision.compression_mode == "WITHOUT_COMPRESSION"
     assert decision.compression_bonus_applied == Decimal("0")
 
 
-def test_scout_without_compression_score_6_allowed(config):
+def test_scout_without_compression_score_6_blocked(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles_no_compression()
     ctx = _ctx(
@@ -337,11 +337,8 @@ def test_scout_without_compression_score_6_allowed(config):
         s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "0.8", "atr": "1"},
     )
     decision = eng.evaluate(ctx)
-    assert decision is not None
-    assert decision.position_fraction == Decimal("0.25")
-    assert decision.score == Decimal("6")
-    assert decision.required_score == Decimal("6")
-    assert decision.compression_mode == "WITHOUT_COMPRESSION"
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION"
 
 
 def test_scout_without_compression_still_respects_anti_chase(config):
