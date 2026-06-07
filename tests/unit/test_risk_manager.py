@@ -73,8 +73,8 @@ def test_tpsl_prices_are_rounded_to_tick(config):
     )
 
     assert d.approved
-    assert d.stop_loss_price == Decimal("0.1594")
-    assert d.take_profit_price == Decimal("0.1603")
+    assert d.stop_loss_price == Decimal("0.1593")
+    assert d.take_profit_price == Decimal("0.1605")
 
 
 def test_stop_too_tight(config):
@@ -100,11 +100,56 @@ def test_scout_min_stop_distance_percent_widens_low_atr_stop(config):
     )
 
     assert d.approved
-    assert d.stop_loss_price == Decimal("99.7")
-    assert d.stop_metadata["atr_stop_price"] == "99.9"
-    assert d.stop_metadata["min_distance_stop_price"] == "99.7"
+    assert d.stop_loss_price == Decimal("99.5")
+    assert d.stop_metadata["atr_stop_price"] == "99.8"
+    assert d.stop_metadata["min_distance_stop_price"] == "99.5"
     assert d.stop_metadata["min_distance_stop_applied"] is True
-    assert d.stop_metadata["stop_distance_percent"] == "0.300"
+    assert d.stop_metadata["stop_distance_percent"] == "0.500"
+
+
+def test_scout_short_min_stop_distance_rounds_away_from_entry(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="0.7",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.25",
+            direction=SignalDirection.SHORT,
+        ),
+        atr="0.2",
+        entry="100",
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("100.5")
+    assert d.stop_metadata["atr_stop_price"] == "100.2"
+    assert d.stop_metadata["min_distance_stop_price"] == "100.5"
+    assert d.stop_metadata["stop_distance_percent"] == "0.500"
+
+
+def test_tiny_tick_scout_min_stop_does_not_round_inside_min_distance(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.3",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.25",
+            symbol="1000PEPEUSDT",
+        ),
+        atr="0.000004032174882507967987170308",
+        entry="0.002751",
+        meta=symbol_meta(
+            symbol="1000PEPEUSDT",
+            tick="0.000001",
+            step="100",
+            min_qty="100",
+        ),
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("0.002738")
+    assert d.stop_metadata["min_distance_stop_price"] == "0.002738"
+    assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.45")
 
 
 def test_scout_structure_stop_can_widen_short_stop(config):

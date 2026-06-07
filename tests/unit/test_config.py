@@ -34,7 +34,7 @@ def test_loads_repo_config():
     assert cfg.api.app_env == "production"
     assert cfg.entry.pre_breakout.min_score == 6
     assert cfg.entry.pre_breakout.position_fraction == 0.40
-    assert cfg.entry.pre_breakout.min_stop_distance_percent == 0.30
+    assert cfg.entry.pre_breakout.min_stop_distance_percent == 0.45
     assert cfg.entry.pre_breakout.min_volume_ratio == 0.55
     assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.require_compression is False
@@ -65,10 +65,13 @@ def test_loads_repo_config():
     assert cfg.position.scout_management.max_defensive_reductions == 1
     assert cfg.position.scout_management.catastrophic_opposite_candle_volume_ratio == 3.0
     assert cfg.position.runner_mode.enabled is True
+    assert cfg.position.trailing_atr_multiplier == 2.4
+    assert cfg.position.trailing_extended_atr_multiplier == 3.0
+    assert cfg.position.runner_mode.weak_trend_trailing_atr == 2.4
     assert cfg.position.runner_mode.strong_trend_trailing_atr == 2.8
     assert cfg.position.runner_mode.very_strong_trend_trailing_atr == 3.2
     assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
-    assert cfg.risk.scout_max_stop_distance_atr == 2.2
+    assert cfg.risk.scout_max_stop_distance_atr == 3.5
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.scout_max_leverage == 4
     assert cfg.risk.breakout_max_leverage == 7

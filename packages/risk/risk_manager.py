@@ -9,7 +9,7 @@ rejects, the order is never placed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 
 from packages.config.settings import AppConfig
 from packages.core.enums import EntryMode, PositionSide, SignalDirection
@@ -84,11 +84,12 @@ class RiskManager:
         if atr <= 0 or entry_price <= 0:
             return _reject("INVALID_MARKET_DATA", stop_metadata)
 
-        atr_stop = round_price_to_tick(
+        atr_stop = self._round_stop_to_tick(
             stop_loss_price(entry_price, atr, decision.stop_atr, side),
+            side,
             symbol_meta.tick_size,
         )
-        structure_stop = self._structure_stop_price(decision, symbol_meta)
+        structure_stop = self._structure_stop_price(decision, side, symbol_meta)
         selected_stop = self._select_stop(side, atr_stop, structure_stop)
         min_distance_stop = self._min_distance_stop_price(
             decision.entry_mode, entry_price, side, symbol_meta
@@ -215,13 +216,20 @@ class RiskManager:
         )
 
     def _structure_stop_price(
-        self, decision: EntryDecision, symbol_meta: SymbolMeta
+        self,
+        decision: EntryDecision,
+        side: PositionSide,
+        symbol_meta: SymbolMeta,
     ) -> Decimal | None:
         if decision.structure_stop_price is None:
             return None
         if not self._structure_stop_enabled(decision.entry_mode):
             return None
-        return round_price_to_tick(decision.structure_stop_price, symbol_meta.tick_size)
+        return self._round_stop_to_tick(
+            decision.structure_stop_price,
+            side,
+            symbol_meta.tick_size,
+        )
 
     def _structure_stop_enabled(self, entry_mode: EntryMode) -> bool:
         c = self.cfg.structure_stop
@@ -253,7 +261,18 @@ class RiskManager:
             if side == PositionSide.LONG
             else entry_price + offset
         )
-        return round_price_to_tick(raw, symbol_meta.tick_size)
+        return self._round_stop_to_tick(raw, side, symbol_meta.tick_size)
+
+    @staticmethod
+    def _round_stop_to_tick(
+        price: Decimal, side: PositionSide, tick: Decimal
+    ) -> Decimal:
+        """Round SL away from entry direction so tick rounding never narrows risk."""
+        if tick <= 0:
+            return price
+        rounding = ROUND_FLOOR if side == PositionSide.LONG else ROUND_CEILING
+        ticks = (price / tick).to_integral_value(rounding=rounding)
+        return ticks * tick
 
     @staticmethod
     def _select_stop(

@@ -114,7 +114,7 @@ class PreBreakoutEntry(_Section):
     min_score: int = 6
     position_fraction: float = 0.30
     stop_atr: float = 0.7
-    min_stop_distance_percent: float = 0.30
+    min_stop_distance_percent: float = 0.45
     min_volume_ratio: float = 0.8
     max_distance_to_box_atr: float = 0.45
     require_compression: bool = False
@@ -245,7 +245,7 @@ class RiskSection(_Section):
     daily_loss_max_leverage: int = 2
     min_stop_distance_atr: float = 0.5
     max_stop_distance_atr: float = 1.5
-    scout_max_stop_distance_atr: float = 2.2
+    scout_max_stop_distance_atr: float = 3.5
     retest_max_stop_distance_atr: float = 1.8
     isolated_margin: bool = True
 
@@ -302,7 +302,7 @@ class RunnerModeSection(_Section):
     enabled: bool = True
     activate_after_partial_tp: bool = True
     activate_min_r: float = 2.0
-    weak_trend_trailing_atr: float = 2.0
+    weak_trend_trailing_atr: float = 2.4
     strong_trend_trailing_atr: float = 2.8
     very_strong_trend_trailing_atr: float = 3.2
     strong_trend_min_r: float = 2.0
@@ -323,9 +323,9 @@ class PositionSection(_Section):
     partial_take_profit_r: float = 2.0
     partial_take_profit_fraction: float = 0.50
     trailing_start_r: float = 2.0
-    trailing_atr_multiplier: float = 2.0
+    trailing_atr_multiplier: float = 2.4
     trailing_extended_after_r: float = 5.0
-    trailing_extended_atr_multiplier: float = 2.5
+    trailing_extended_atr_multiplier: float = 3.0
     max_holding_minutes: int = 180
     sync_exchange_sl_with_trailing: bool = True
     min_exchange_sl_update_interval_sec: int = 5

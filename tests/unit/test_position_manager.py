@@ -488,7 +488,7 @@ def test_runner_very_strong_uses_3_2_atr(config):
     assert pos.stop_loss_price == Decimal("102.8")
 
 
-def test_runner_weak_trend_uses_2_0_atr(config):
+def test_runner_weak_trend_uses_2_4_atr(config):
     pm = PositionManager(config)
     pos = _pos()
     pos.partial_tp_done = True
@@ -504,8 +504,8 @@ def test_runner_weak_trend_uses_2_0_atr(config):
     )
 
     assert pos.runner_trend_strength == "WEAK"
-    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
-    assert pos.stop_loss_price == Decimal("101")
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.4")
+    assert pos.stop_loss_price == Decimal("100.6")
 
 
 def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
@@ -551,7 +551,7 @@ def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
         snapshot_5m=hold_5m,
     )
     assert pos.runner_trend_strength == "WEAK"
-    assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
+    assert pos.runner_trailing_atr_multiplier == Decimal("2.4")
 
 
 def test_runner_long_stop_never_moves_against_position(config):
@@ -629,7 +629,7 @@ def test_runner_disables_stagnation_exit(config):
     pos.runner_mode_active = True
     pos.partial_tp_done = True
     pos.runner_trend_strength = "WEAK"
-    pos.runner_trailing_atr_multiplier = Decimal("2.0")
+    pos.runner_trailing_atr_multiplier = Decimal("2.4")
 
     actions = pm.evaluate(
         pos,
