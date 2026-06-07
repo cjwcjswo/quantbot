@@ -48,7 +48,7 @@ def test_happy_path_approved(config):
     d = _approve(config)
     assert d.approved
     assert d.side == PositionSide.LONG
-    assert d.qty == Decimal("30")
+    assert d.qty == Decimal("45.0")
     assert d.stop_loss_price == Decimal("99")
     assert d.take_profit_price == Decimal("102")
     assert d.leverage >= Decimal("1")
@@ -60,8 +60,8 @@ def test_position_fraction_reduces_sizing(config):
 
     assert full.approved
     assert reduced.approved
-    assert full.qty == Decimal("30")
-    assert reduced.qty == Decimal("20")
+    assert full.qty == Decimal("45.0")
+    assert reduced.qty == Decimal("30.0")
 
 
 def test_tpsl_prices_are_rounded_to_tick(config):
@@ -256,7 +256,7 @@ def test_below_min_qty(config):
 
 
 def test_symbol_risk_exceeded(config):
-    config.risk.max_symbol_risk_percent = 0.1  # 0.3% computed > 0.1%
+    config.risk.max_symbol_risk_percent = 0.1  # 0.45% computed > 0.1%
     d = _approve(config)
     assert not d.approved and d.reason == "SYMBOL_RISK_EXCEEDED"
 
@@ -265,7 +265,7 @@ def test_total_risk_exceeded(config):
     big = Position(
         symbol="ETHUSDT", side=PositionSide.LONG, status=PositionStatus.ACTIVE,
         qty=Decimal("1"), avg_entry_price=Decimal("100"),
-        initial_risk_per_unit=Decimal("480"),  # 4.8% of 10000
+        initial_risk_per_unit=Decimal("560"),  # 5.6% of 10000
     )
     ctx = RiskContext(equity=Decimal("10000"), open_positions=[big])
     d = _approve(config, ctx=ctx)
