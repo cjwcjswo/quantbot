@@ -132,14 +132,32 @@ class RiskManager:
             return _reject("MAX_SAME_DIRECTION", stop_metadata)
 
         # Leverage cap (§13.3)
+        high_quality = self._is_high_quality(decision)
         lev_cap = max_leverage(
             entry_mode=decision.entry_mode,
             atr_percent=self._atr_percent(atr, entry_price),
             consecutive_losses=ctx.consecutive_losses,
             daily_loss_percent=ctx.daily_loss_percent,
             config=risk,
+            high_quality=high_quality,
         )
         max_notional = ctx.equity * lev_cap
+        target_notional_percent = self._target_notional_percent(
+            decision,
+            high_quality=high_quality,
+        )
+        target_notional = (
+            ctx.equity * target_notional_percent / Decimal(100)
+            if target_notional_percent is not None
+            else None
+        )
+        risk_based_notional = self._risk_based_notional(
+            equity=ctx.equity,
+            risk_percent=Decimal(str(risk.account_risk_per_trade_percent)),
+            position_fraction=decision.position_fraction,
+            entry_price=entry_price,
+            stop_loss_price=stop,
+        )
 
         # Sizing (§13.1)
         try:
@@ -153,9 +171,18 @@ class RiskManager:
                 stop_loss_price=stop,
                 qty_step=symbol_meta.qty_step,
                 max_notional=max_notional,
+                target_notional=target_notional,
             )
         except RiskRejection as exc:
             return _reject(exc.reason, stop_metadata)
+        if target_notional is not None:
+            stop_metadata["high_quality"] = high_quality
+            stop_metadata["target_notional_percent"] = str(target_notional_percent)
+            stop_metadata["target_notional"] = str(target_notional)
+            stop_metadata["risk_based_notional"] = str(risk_based_notional)
+            stop_metadata["target_notional_applied"] = (
+                target_notional > risk_based_notional
+            )
 
         if not meets_min_qty(sizing.qty, symbol_meta):
             return _reject("BELOW_MIN_QTY", stop_metadata)
@@ -296,6 +323,55 @@ class RiskManager:
                 )
             return limit
         return Decimal(str(self.cfg.risk.max_stop_distance_atr))
+
+    def _target_notional_percent(
+        self,
+        decision: EntryDecision,
+        *,
+        high_quality: bool,
+    ) -> Decimal | None:
+        config = self.cfg.risk.target_notional_percent
+        if not config.enabled:
+            return None
+
+        if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            value = (
+                config.scout_compression
+                if decision.has_compression is True
+                else config.scout_no_compression
+            )
+        elif decision.entry_mode == EntryMode.BREAKOUT_CONFIRM:
+            value = config.breakout_confirm
+        elif decision.entry_mode == EntryMode.RETEST_CONFIRM:
+            value = config.retest_confirm
+        else:
+            return None
+
+        percent = Decimal(str(value))
+        if high_quality:
+            percent = max(percent, Decimal(str(config.high_quality)))
+        return percent if percent > 0 else None
+
+    def _is_high_quality(self, decision: EntryDecision) -> bool:
+        config = self.cfg.risk.target_notional_percent
+        if not config.enabled:
+            return False
+        return decision.score >= Decimal(str(config.high_quality_min_score))
+
+    @staticmethod
+    def _risk_based_notional(
+        *,
+        equity: Decimal,
+        risk_percent: Decimal,
+        position_fraction: Decimal,
+        entry_price: Decimal,
+        stop_loss_price: Decimal,
+    ) -> Decimal:
+        stop_distance_percent = abs(entry_price - stop_loss_price) / entry_price
+        if stop_distance_percent <= 0:
+            return Decimal(0)
+        mode_risk = equity * risk_percent / Decimal(100) * position_fraction
+        return mode_risk / stop_distance_percent
 
     def _with_stop_metadata(
         self,

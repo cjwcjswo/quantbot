@@ -225,6 +225,16 @@ class OrdersSection(_Section):
     partial_fill_below_min_action: str = "CLOSE_FILLED_QTY"
 
 
+class TargetNotionalPercentSection(_Section):
+    enabled: bool = False
+    scout_no_compression: float = 30
+    scout_compression: float = 50
+    breakout_confirm: float = 70
+    retest_confirm: float = 80
+    high_quality: float = 120
+    high_quality_min_score: float = 9
+
+
 class RiskSection(_Section):
     account_risk_per_trade_percent: float = 1.8
     daily_max_loss_percent: float = 5.0
@@ -248,6 +258,9 @@ class RiskSection(_Section):
     scout_max_stop_distance_atr: float = 3.5
     retest_max_stop_distance_atr: float = 1.8
     isolated_margin: bool = True
+    target_notional_percent: TargetNotionalPercentSection = (
+        TargetNotionalPercentSection()
+    )
 
 
 class LiquidationGuardSection(_Section):

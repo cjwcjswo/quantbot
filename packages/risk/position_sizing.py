@@ -5,6 +5,7 @@ base_risk_usdt       = equity * account_risk_per_trade_percent / 100
 entry_mode_risk_usdt = base_risk_usdt * position_fraction
 stop_distance_percent = abs(entry - stop_loss) / entry
 position_notional    = entry_mode_risk_usdt / stop_distance_percent
+position_notional    = max(position_notional, target_notional)  # when configured
 qty                  = position_notional / entry
 ```
 qty is floored to ``qtyStep``. A leverage cap may bound ``position_notional``.
@@ -36,6 +37,7 @@ def compute_size(
     stop_loss_price: Decimal,
     qty_step: Decimal,
     max_notional: Decimal | None = None,
+    target_notional: Decimal | None = None,
 ) -> SizingResult:
     if entry_price <= 0:
         raise RiskRejection("INVALID_ENTRY_PRICE", "entry price must be positive")
@@ -47,6 +49,8 @@ def compute_size(
     mode_risk = base_risk * position_fraction
     stop_distance_percent = stop_distance / entry_price
     notional = mode_risk / stop_distance_percent
+    if target_notional is not None and target_notional > notional:
+        notional = target_notional
     if max_notional is not None and notional > max_notional:
         notional = max_notional
 

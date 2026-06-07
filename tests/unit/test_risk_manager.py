@@ -16,6 +16,8 @@ def _decision(
     symbol="BTCUSDT",
     direction=SignalDirection.LONG,
     structure_stop_price=None,
+    has_compression=None,
+    score="7",
 ):
     return EntryDecision(
         symbol=symbol,
@@ -23,17 +25,27 @@ def _decision(
         entry_mode=mode,
         position_fraction=Decimal(frac),
         stop_atr=Decimal(stop_atr),
-        score=Decimal("7"),
+        score=Decimal(score),
         reason="test",
         structure_stop_price=(
             Decimal(str(structure_stop_price))
             if structure_stop_price is not None
             else None
         ),
+        has_compression=has_compression,
     )
 
 
-def _approve(config, decision=None, ctx=None, meta=None, atr="1", entry="100"):
+def _approve(
+    config,
+    decision=None,
+    ctx=None,
+    meta=None,
+    atr="1",
+    entry="100",
+    use_target_notional=False,
+):
+    config.risk.target_notional_percent.enabled = use_target_notional
     rm = RiskManager(config)
     return rm.approve(
         decision or _decision(),
@@ -48,7 +60,7 @@ def test_happy_path_approved(config):
     d = _approve(config)
     assert d.approved
     assert d.side == PositionSide.LONG
-    assert d.qty == Decimal("54.0")
+    assert d.qty == Decimal("75.0")
     assert d.stop_loss_price == Decimal("99")
     assert d.take_profit_price == Decimal("102")
     assert d.leverage >= Decimal("1")
@@ -60,8 +72,8 @@ def test_position_fraction_reduces_sizing(config):
 
     assert full.approved
     assert reduced.approved
-    assert full.qty == Decimal("54.0")
-    assert reduced.qty == Decimal("36.0")
+    assert full.qty == Decimal("75.0")
+    assert reduced.qty == Decimal("50.0")
 
 
 def test_tpsl_prices_are_rounded_to_tick(config):
@@ -301,7 +313,7 @@ def test_below_min_qty(config):
 
 
 def test_symbol_risk_exceeded(config):
-    config.risk.max_symbol_risk_percent = 0.1  # 0.54% computed > 0.1%
+    config.risk.max_symbol_risk_percent = 0.1  # 0.75% computed > 0.1%
     d = _approve(config)
     assert not d.approved and d.reason == "SYMBOL_RISK_EXCEEDED"
 
@@ -310,11 +322,104 @@ def test_total_risk_exceeded(config):
     big = Position(
         symbol="ETHUSDT", side=PositionSide.LONG, status=PositionStatus.ACTIVE,
         qty=Decimal("1"), avg_entry_price=Decimal("100"),
-        initial_risk_per_unit=Decimal("650"),  # 6.5% of 10000
+        initial_risk_per_unit=Decimal("950"),  # 9.5% of 10000
     )
     ctx = RiskContext(equity=Decimal("10000"), open_positions=[big])
     d = _approve(config, ctx=ctx)
     assert not d.approved and d.reason == "TOTAL_RISK_EXCEEDED"
+
+
+def test_target_notional_lifts_scout_no_compression(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="3.0",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.30",
+            has_compression=False,
+        ),
+        use_target_notional=True,
+    )
+
+    assert d.approved
+    assert d.notional == Decimal("3000.0")
+    assert d.qty == Decimal("30.0")
+    assert d.risk_usdt == Decimal("90.0")
+    assert Decimal(d.stop_metadata["target_notional_percent"]) == Decimal("30")
+    assert d.stop_metadata["target_notional_applied"] is True
+
+
+def test_target_notional_uses_compressed_scout_percent(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="3.0",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.60",
+            has_compression=True,
+        ),
+        use_target_notional=True,
+    )
+
+    assert d.approved
+    assert d.notional == Decimal("5000.0")
+    assert d.qty == Decimal("50.0")
+    assert Decimal(d.stop_metadata["target_notional_percent"]) == Decimal("50")
+
+
+def test_target_notional_can_require_leverage(config):
+    config.risk.target_notional_percent.retest_confirm = 150
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.8",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.85",
+        ),
+        use_target_notional=True,
+    )
+
+    assert d.approved
+    assert d.notional == Decimal("15000.0")
+    assert d.leverage == Decimal("2")
+    assert d.stop_metadata["target_notional_applied"] is True
+
+
+def test_high_quality_target_notional_overrides_mode_target(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="2.0",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.30",
+            has_compression=False,
+            score="9",
+        ),
+        use_target_notional=True,
+    )
+
+    assert d.approved
+    assert d.notional == Decimal("12000.0")
+    assert d.leverage == Decimal("2")
+    assert d.risk_usdt == Decimal("240.0")
+    assert d.stop_metadata["high_quality"] is True
+    assert Decimal(d.stop_metadata["target_notional_percent"]) == Decimal("120")
+
+
+def test_target_notional_still_respects_symbol_risk_limit(config):
+    config.risk.target_notional_percent.retest_confirm = 200
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.8",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.85",
+        ),
+        use_target_notional=True,
+    )
+
+    assert not d.approved
+    assert d.reason == "SYMBOL_RISK_EXCEEDED"
 
 
 def test_liquidation_distance_guard(config):

@@ -45,6 +45,36 @@ def test_compute_size_leverage_cap():
     assert r.qty == Decimal("20")
 
 
+def test_compute_size_target_notional_lifts_risk_size():
+    r = compute_size(
+        equity=Decimal("10000"),
+        account_risk_per_trade_percent=Decimal("1.0"),
+        position_fraction=Decimal("0.30"),
+        entry_price=Decimal("100"),
+        stop_loss_price=Decimal("97"),
+        qty_step=Decimal("0.001"),
+        target_notional=Decimal("1500"),
+    )
+    assert r.notional == Decimal("1500")
+    assert r.qty == Decimal("15")
+    assert r.risk_usdt == Decimal("45")
+
+
+def test_compute_size_leverage_cap_bounds_target_notional():
+    r = compute_size(
+        equity=Decimal("10000"),
+        account_risk_per_trade_percent=Decimal("1.0"),
+        position_fraction=Decimal("0.30"),
+        entry_price=Decimal("100"),
+        stop_loss_price=Decimal("97"),
+        qty_step=Decimal("0.001"),
+        target_notional=Decimal("5000"),
+        max_notional=Decimal("2000"),
+    )
+    assert r.notional == Decimal("2000")
+    assert r.qty == Decimal("20")
+
+
 def test_compute_size_zero_stop_rejected():
     with pytest.raises(RiskRejection):
         compute_size(
