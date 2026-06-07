@@ -76,11 +76,13 @@ def series_from_closes(
     *,
     symbol: str = "BTCUSDT",
     interval: str = "5",
-    interval_ms: int = 5 * 60_000,
+    interval_ms: int | None = None,
     spread: str | Decimal = "1",
     volume: str | Decimal = "1000",
 ) -> list[Candle]:
     """Build a confirmed candle series with given closes; high/low = close +/- spread."""
+    if interval_ms is None:
+        interval_ms = int(interval) * 60_000
     sp = Decimal(str(spread))
     out: list[Candle] = []
     prev = Decimal(str(closes[0]))

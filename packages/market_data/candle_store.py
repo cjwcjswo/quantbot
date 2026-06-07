@@ -27,12 +27,24 @@ class CandleStore:
     def _key(self, symbol: str, interval: str) -> tuple[str, str]:
         return (symbol, interval)
 
+    @staticmethod
+    def _count_gaps(candles: list[Candle], interval: str) -> int:
+        if len(candles) < 2:
+            return 0
+        step = interval_to_ms(interval)
+        gaps = 0
+        for prev, cur in zip(candles, candles[1:]):
+            gap = (cur.open_time_ms - prev.open_time_ms) // step - 1
+            if gap > 0:
+                gaps += gap
+        return gaps
+
     def seed(self, symbol: str, interval: str, candles: list[Candle]) -> None:
         """Replace history with a REST snapshot (chronological order)."""
         key = self._key(symbol, interval)
         confirmed = [c for c in candles if c.confirmed]
         self._confirmed[key] = deque(confirmed[-self._max :], maxlen=self._max)
-        self._gaps[key] = 0
+        self._gaps[key] = self._count_gaps(confirmed, interval)
         current = next((c for c in reversed(candles) if not c.confirmed), None)
         if current is None:
             self._current.pop(key, None)

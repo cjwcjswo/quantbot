@@ -51,6 +51,23 @@ def test_gap_detection():
     assert store.missing_candles("BTCUSDT", "5") == 2
 
 
+def test_seed_recomputes_gap_count_from_snapshot():
+    store = CandleStore()
+    store.seed(
+        "BTCUSDT",
+        "5",
+        [candle(open_time_ms=0), candle(open_time_ms=3 * 300_000)],
+    )
+    assert store.missing_candles("BTCUSDT", "5") == 2
+
+    store.seed(
+        "BTCUSDT",
+        "5",
+        [candle(open_time_ms=0), candle(open_time_ms=300_000)],
+    )
+    assert store.missing_candles("BTCUSDT", "5") == 0
+
+
 def test_stale_candle_ignored():
     store = CandleStore()
     store.seed(

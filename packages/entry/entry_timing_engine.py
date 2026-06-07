@@ -456,14 +456,15 @@ class EntryTimingEngine:
             required_score=required_score,
             position_fraction=position_fraction,
         )
-        reason = self._scout_condition_reason(
+        reasons = self._scout_condition_reasons(
             ctx, last, atr1, is_long, compression
         )
-        if reason is not None:
+        if reasons:
             self._record_no_entry(
                 "entry_timing",
-                reason,
+                reasons[0],
                 entry_mode_candidate=EntryMode.PRE_BREAKOUT_SCOUT.value,
+                scout_failed_conditions=reasons,
                 **meta,
             )
             return None
@@ -556,35 +557,57 @@ class EntryTimingEngine:
         is_long: bool,
         compression: ScoutCompression,
     ) -> str | None:
+        reasons = self._scout_condition_reasons(
+            ctx, last, atr1, is_long, compression
+        )
+        return reasons[0] if reasons else None
+
+    def _scout_condition_reasons(
+        self,
+        ctx: EntryContext,
+        last: Candle,
+        atr1: Decimal,
+        is_long: bool,
+        compression: ScoutCompression,
+    ) -> list[str]:
         rsi = ctx.snapshot_1m.rsi14
         vol = ctx.snapshot_1m.volume_ratio
         if rsi is None or vol is None:
-            return "SCOUT_DATA_MISSING"
+            return ["SCOUT_DATA_MISSING"]
         if self.cfg.entry.pre_breakout.require_compression and not compression.has_compression:
-            return "SCOUT_NO_COMPRESSION"
+            return ["SCOUT_NO_COMPRESSION"]
         scout = self.cfg.entry.pre_breakout
-        exhaustion_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
-        if not (Decimal(str(scout.min_volume_ratio)) <= vol < exhaustion_vr):
-            return "VOLUME_TOO_LOW" if vol < Decimal(str(scout.min_volume_ratio)) else "BREAKOUT_EXHAUSTION"
+        reasons: list[str] = []
         dist_limit = Decimal(str(scout.max_distance_to_box_atr)) * atr1
+        exhaustion_vr = Decimal(str(self.cfg.volume.max_exhaustion_volume_ratio))
         m = metrics_of(last)
         if is_long:
             if not (ctx.box_high - last.close <= dist_limit and last.close <= ctx.box_high):
-                return "SCOUT_TOO_FAR_FROM_BOX"
+                reasons.append("SCOUT_TOO_FAR_FROM_BOX")
+        else:
+            if not (last.close - ctx.box_low <= dist_limit and last.close >= ctx.box_low):
+                reasons.append("SCOUT_TOO_FAR_FROM_BOX")
+        if vol < Decimal(str(scout.min_volume_ratio)):
+            reasons.append("VOLUME_TOO_LOW")
+        elif vol >= exhaustion_vr:
+            reasons.append("BREAKOUT_EXHAUSTION")
+        if is_long:
             if count_rising_lows(ctx.candles_1m) < 2:
-                return "SCOUT_STRUCTURE_WEAK"
+                reasons.append("SCOUT_STRUCTURE_WEAK")
             if not (Decimal(str(scout.long_rsi_min)) <= rsi <= Decimal(str(scout.long_rsi_max))):
-                return "TREND_CONDITION_FAILED"
+                reasons.append("TREND_CONDITION_FAILED")
             anti = self.anti_chase.block_long(ctx.snapshot_1m, ctx.candles_1m, m)
-            return f"ANTI_CHASE_LONG:{anti}" if anti else None
-        if not (last.close - ctx.box_low <= dist_limit and last.close >= ctx.box_low):
-            return "SCOUT_TOO_FAR_FROM_BOX"
-        if count_falling_highs(ctx.candles_1m) < 2:
-            return "SCOUT_STRUCTURE_WEAK"
-        if not (Decimal(str(scout.short_rsi_min)) <= rsi <= Decimal(str(scout.short_rsi_max))):
-            return "TREND_CONDITION_FAILED"
-        anti = self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m)
-        return f"ANTI_CHASE_SHORT:{anti}" if anti else None
+            if anti:
+                reasons.append(f"ANTI_CHASE_LONG:{anti}")
+        else:
+            if count_falling_highs(ctx.candles_1m) < 2:
+                reasons.append("SCOUT_STRUCTURE_WEAK")
+            if not (Decimal(str(scout.short_rsi_min)) <= rsi <= Decimal(str(scout.short_rsi_max))):
+                reasons.append("TREND_CONDITION_FAILED")
+            anti = self.anti_chase.block_short(ctx.snapshot_1m, ctx.candles_1m, m)
+            if anti:
+                reasons.append(f"ANTI_CHASE_SHORT:{anti}")
+        return reasons
 
     def _scout_conditions(
         self, ctx: EntryContext, last: Candle, atr1: Decimal, is_long: bool

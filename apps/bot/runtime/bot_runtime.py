@@ -884,6 +884,22 @@ class BotRuntime:
                 self._scanner_snapshots_5m.pop(symbol, None)
         return dict(self._scanner_atr_percent)
 
+    def _entry_box_levels(
+        self,
+        candles_1m: list,
+        snapshot_1m,
+        fallback_price: Decimal,
+    ) -> tuple[Decimal, Decimal]:
+        prior = candles_1m[:-1]
+        if prior:
+            lookback = max(1, int(getattr(self._indicators, "swing_lookback", 20)))
+            window = prior[-lookback:]
+            return max(c.high for c in window), min(c.low for c in window)
+        return (
+            snapshot_1m.swing_high or fallback_price,
+            snapshot_1m.swing_low or fallback_price,
+        )
+
     async def _process_symbol(self, symbol: str, equity: Decimal) -> dict | None:
         """Manage an open position or consider a new entry.
 
@@ -906,6 +922,13 @@ class BotRuntime:
                 "1", symbol=symbol, priority=active_bot_position
             ),
         )
+        if (
+            self._collector.missing_candles(symbol, "1")
+            > self.config.data_quality.max_missing_candles
+        ):
+            await self._collector.refresh_klines(
+                symbol, "1", limit=200, min_refresh_ms=0
+            )
         for tf in ("5", "15"):
             if not self._collector.store.get(symbol, tf):
                 await self._collector.refresh_klines(
@@ -914,6 +937,7 @@ class BotRuntime:
                     limit=200,
                     min_refresh_ms=self._kline_min_refresh_ms(tf),
                 )
+        candles_1m = self._collector.store.get(symbol, "1")
         snapshots = {
             tf: self._indicators.snapshot(
                 symbol, tf, self._collector.store.get(symbol, tf)
@@ -970,8 +994,9 @@ class BotRuntime:
             next_funding_time_ms=ticker.next_funding_time_ms,
             funding_rate=ticker.funding_rate,
         )
-        box_high = s1.swing_high or ticker.last_price
-        box_low = s1.swing_low or ticker.last_price
+        box_high, box_low = self._entry_box_levels(
+            candles_1m, s1, ticker.last_price
+        )
 
         async def load_orderbook():
             ob = await self._collector.refresh_orderbook(symbol)
@@ -979,7 +1004,7 @@ class BotRuntime:
 
         opened = await self._trading.evaluate_entry(
             symbol=symbol, snapshots=snapshots,
-            candles_1m=self._collector.store.get(symbol, "1"),
+            candles_1m=candles_1m,
             box_high=box_high, box_low=box_low, symbol_meta=meta,
             equity=equity, entry_price=ticker.last_price, best_bid=bid, best_ask=ask,
             market=market, orderbook_provider=load_orderbook,

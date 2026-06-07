@@ -340,6 +340,100 @@ async def test_process_symbol_passes_only_confirmed_candles_to_entry(redis):
     await rt.shutdown()
 
 
+async def test_process_symbol_entry_box_excludes_decision_candle(redis):
+    class CaptureTrading:
+        def __init__(self):
+            self.kwargs = None
+
+        async def update_post_exit_mfe(self, *args, **kwargs):
+            return None
+
+        async def evaluate_entry(self, **kwargs):
+            self.kwargs = kwargs
+            return None
+
+        def preview_watch(self, **kwargs):
+            return {}
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(
+        ticker(symbol="BTCUSDT", last="104", bid="103.9", ask="104.1",
+               turnover_24h="100000000")
+    )
+    prior = [
+        candle(
+            symbol="BTCUSDT", interval="1", open_time_ms=i * 60_000,
+            o="100", h="101", l="99", c="100",
+        )
+        for i in range(60)
+    ]
+    breakout = candle(
+        symbol="BTCUSDT", interval="1", open_time_ms=60 * 60_000,
+        o="100", h="106", l="99", c="104", v="2000",
+    )
+    gw.set_kline("BTCUSDT", "1", prior + [breakout])
+    for tf in ("5", "15"):
+        gw.set_kline(
+            "BTCUSDT", tf,
+            series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf),
+        )
+
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+    await rt._collector.refresh_tickers()
+    capture = CaptureTrading()
+    rt._trading = capture
+
+    await rt._process_symbol("BTCUSDT", Decimal("10000"))
+
+    assert capture.kwargs is not None
+    assert capture.kwargs["box_high"] == Decimal("101")
+    assert capture.kwargs["box_low"] == Decimal("99")
+    assert capture.kwargs["snapshots"]["1"].swing_high == Decimal("106")
+    await rt.shutdown()
+
+
+async def test_process_symbol_forces_kline_refresh_when_gap_is_pending(redis):
+    class CaptureTrading:
+        async def update_post_exit_mfe(self, *args, **kwargs):
+            return None
+
+        async def evaluate_entry(self, **kwargs):
+            return None
+
+        def preview_watch(self, **kwargs):
+            return {}
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    for tf in ("1", "5", "15"):
+        gw.set_kline(
+            "BTCUSDT", tf,
+            series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf),
+        )
+
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+    await rt._collector.refresh_tickers()
+    await rt._collector.refresh_klines("BTCUSDT", "1")
+    for tf in ("5", "15"):
+        await rt._collector.refresh_klines("BTCUSDT", tf)
+    gw.kline_calls.clear()
+    rt._collector.store._gaps[("BTCUSDT", "1")] = 2
+    rt._trading = CaptureTrading()
+
+    await rt._process_symbol("BTCUSDT", Decimal("10000"))
+
+    assert ("BTCUSDT", "1", 200) in gw.kline_calls
+    assert rt._collector.missing_candles("BTCUSDT", "1") == 0
+    await rt.shutdown()
+
+
 async def test_process_symbol_reuses_cached_higher_timeframe_klines(redis):
     class CaptureTrading:
         async def update_post_exit_mfe(self, *args, **kwargs):

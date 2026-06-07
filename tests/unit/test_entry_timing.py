@@ -392,6 +392,25 @@ def test_scout_without_compression_score_6_blocked(config):
     assert eng.last_no_entry_reason["reason_code"] == "SCOUT_SCORE_TOO_LOW_NO_COMPRESSION"
 
 
+def test_scout_logs_distance_before_volume_when_both_fail(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles()
+    decision = eng.evaluate(
+        _ctx(
+            candles_1m=candles,
+            box_high="102",
+            s1_kwargs={"ema20": "100", "rsi": "55", "volume_ratio": "0.5", "atr": "1"},
+        )
+    )
+
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_TOO_FAR_FROM_BOX"
+    assert eng.last_no_entry_reason["scout_failed_conditions"][:2] == [
+        "SCOUT_TOO_FAR_FROM_BOX",
+        "VOLUME_TOO_LOW",
+    ]
+
+
 def test_scout_without_compression_still_respects_anti_chase(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles_no_compression()
