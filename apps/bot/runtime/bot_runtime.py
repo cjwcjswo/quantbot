@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import zlib
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -124,6 +125,7 @@ class BotRuntime:
         self._scanner_snapshots_15m: dict[str, Any] = {}
         self._scanner_snapshots_5m: dict[str, Any] = {}
         self._scanner_cursor: int = 0
+        self._market_ws_symbols: set[str] = set()
         self._last_reconciliation_status: dict[str, Any] = {}
         self._last_kill_switch_trip_reason: str | None = None
 
@@ -597,14 +599,29 @@ class BotRuntime:
         start = getattr(self._gateway, "start_market_websocket", None)
         if start is None or self._collector is None:
             return
+        symbols = self._watch_symbols()
+        if not symbols:
+            return
+        symbol_set = set(symbols)
+        if self._market_ws_symbols == symbol_set:
+            return
+        stop = getattr(self._gateway, "stop_market_websocket", None)
+        if self._market_ws_symbols and stop is not None:
+            try:
+                stop()
+                self._market_ws_symbols = set()
+            except Exception:
+                logger.debug("market WebSocket stop failed before resubscribe")
         try:
             start(
-                symbols=self._watch_symbols(),
-                on_candle=self._collector.store.update,
+                symbols=symbols,
+                on_candle=self._collector.ingest_candle,
                 on_ticker=self._collector.ingest_ticker,
                 on_disconnect=lambda: asyncio.create_task(self._handle_ws_disconnect()),
             )
+            self._market_ws_symbols = symbol_set
         except Exception:
+            self._market_ws_symbols = set()
             logger.warning("market WebSocket unavailable; using REST polling")
 
     def _start_private_ws(self) -> None:
@@ -768,6 +785,7 @@ class BotRuntime:
             snapshots_5m=self._scanner_snapshots_5m,
         )
         self._last_scanner_refresh = now
+        self._start_market_ws()
 
     def _scanner_prefilter_tickers(self, tickers) -> list:
         assert self._universe is not None
@@ -858,13 +876,26 @@ class BotRuntime:
         ticker = self._collector.ticker(symbol)
         if ticker is None:
             return None
-        for tf in ("1", "5", "15"):
-            await self._collector.refresh_klines(
-                symbol,
-                tf,
-                limit=200,
-                min_refresh_ms=self._kline_min_refresh_ms(tf),
-            )
+        pos = self.runtime_state.get_position(symbol)
+        active_bot_position = (
+            pos is not None and pos.is_bot_managed and pos.is_active
+        )
+        await self._collector.refresh_klines(
+            symbol,
+            "1",
+            limit=200,
+            min_refresh_ms=self._kline_min_refresh_ms(
+                "1", symbol=symbol, priority=active_bot_position
+            ),
+        )
+        for tf in ("5", "15"):
+            if not self._collector.store.get(symbol, tf):
+                await self._collector.refresh_klines(
+                    symbol,
+                    tf,
+                    limit=200,
+                    min_refresh_ms=self._kline_min_refresh_ms(tf),
+                )
         snapshots = {
             tf: self._indicators.snapshot(
                 symbol, tf, self._collector.store.get(symbol, tf)
@@ -893,8 +924,7 @@ class BotRuntime:
         )
 
         # manage an existing position first
-        pos = self.runtime_state.get_position(symbol)
-        if pos is not None and pos.is_bot_managed and pos.is_active:
+        if active_bot_position:
             atr1 = s1.atr14 or Decimal(0)
             actions = await self._trading.manage(
                 symbol=symbol, price=ticker.last_price, atr=atr1,
@@ -946,9 +976,17 @@ class BotRuntime:
             box_high=box_high, box_low=box_low, last_price=ticker.last_price,
         )
 
-    def _kline_min_refresh_ms(self, timeframe: str) -> int:
+    def _kline_min_refresh_ms(
+        self, timeframe: str, *, symbol: str | None = None, priority: bool = False
+    ) -> int:
         if timeframe == "1":
-            return self.config.scanner.kline_1m_refresh_sec * 1000
+            base = self.config.scanner.kline_1m_refresh_sec * 1000
+            if priority or symbol is None:
+                return base
+            spread = min(30_000, max(0, base // 2))
+            if spread <= 0:
+                return base
+            return base + zlib.crc32(symbol.encode("utf-8")) % spread
         if timeframe == "5":
             return self.config.scanner.kline_5m_refresh_sec * 1000
         if timeframe == "15":

@@ -13,7 +13,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from packages.core.models import MarketTicker, OrderBook
+from packages.core.models import Candle, MarketTicker, OrderBook
 from packages.exchange import ExchangeGateway
 from packages.market_data.candle_store import CandleStore
 
@@ -75,6 +75,11 @@ class MarketDataCollector:
         """Push a ticker from a WebSocket callback (updates freshness)."""
         self._tickers[ticker.symbol] = ticker
         self._last_ticker_ms = self._clock_ms()
+
+    def ingest_candle(self, candle: Candle) -> None:
+        """Push a candle from a WebSocket callback and update freshness."""
+        self._store.update(candle)
+        self._last_kline_ms[(candle.symbol, candle.interval)] = self._clock_ms()
 
     async def refresh_orderbook(self, symbol: str, depth: int = 50) -> OrderBook:
         ob = await self._gw.get_orderbook(symbol, depth)

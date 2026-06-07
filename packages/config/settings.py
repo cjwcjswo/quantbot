@@ -66,7 +66,7 @@ class ScannerSection(_Section):
     atr_prefilter_multiple: int = 3
     atr_refresh_budget: int = 30
     atr_cache_ttl_sec: int = 900
-    kline_1m_refresh_sec: int = 25
+    kline_1m_refresh_sec: int = 60
     kline_5m_refresh_sec: int = 120
     kline_15m_refresh_sec: int = 300
     min_atr_percent: float = 0.5
@@ -393,7 +393,7 @@ class ManualInterventionSection(_Section):
 
 
 class DataQualitySection(_Section):
-    max_kline_delay_sec: int = 30
+    max_kline_delay_sec: int = 90
     max_ticker_delay_sec: int = 30
     max_orderbook_delay_sec: int = 3
     max_missing_candles: int = 1

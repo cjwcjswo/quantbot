@@ -300,6 +300,17 @@ class BybitExchangeGateway:
                 self._ws.kline_stream(interval=interval, symbol=symbol, callback=_kline_cb)
         self._ws_on_disconnect = on_disconnect
 
+    def stop_market_websocket(self) -> None:
+        ws = getattr(self, "_ws", None)
+        if ws is None:
+            return
+        try:
+            ws.exit()
+        except Exception:  # noqa: BLE001 - pybit exposes exit on WebSocket objects
+            logger.debug("market websocket stop failed")
+        finally:
+            self._ws = None
+
     def start_private_websocket(
         self,
         *,

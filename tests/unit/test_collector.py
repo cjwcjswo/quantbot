@@ -63,6 +63,16 @@ async def test_refresh_tickers_indexed_by_symbol():
     assert mdc.last_ticker_ms() is not None
 
 
+async def test_ingest_candle_updates_store_and_freshness():
+    store = CandleStore()
+    now, box = _clock()
+    mdc = MarketDataCollector(FakeGateway(), store, clock_ms=now)
+    mdc.ingest_candle(candle(symbol="BTCUSDT", interval="1", open_time_ms=60_000))
+
+    assert store.last_closed("BTCUSDT", "1") is not None
+    assert mdc.last_kline_ms("BTCUSDT", "1") == 1_000_000
+
+
 async def test_refresh_orderbook():
     from packages.core.models import OrderBook, OrderBookLevel
 

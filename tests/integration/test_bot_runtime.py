@@ -298,6 +298,73 @@ async def test_process_symbol_passes_only_confirmed_candles_to_entry(redis):
     await rt.shutdown()
 
 
+async def test_process_symbol_reuses_cached_higher_timeframe_klines(redis):
+    class CaptureTrading:
+        async def update_post_exit_mfe(self, *args, **kwargs):
+            return None
+
+        async def evaluate_entry(self, **kwargs):
+            return None
+
+        def preview_watch(self, **kwargs):
+            return {}
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    for tf in ("1", "5", "15"):
+        gw.set_kline("BTCUSDT", tf,
+                     series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
+
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    await rt._universe.refresh()
+    await rt._collector.refresh_tickers()
+    await rt._collector.refresh_klines("BTCUSDT", "5")
+    await rt._collector.refresh_klines("BTCUSDT", "15")
+    gw.kline_calls.clear()
+    rt._trading = CaptureTrading()
+
+    await rt._process_symbol("BTCUSDT", Decimal("10000"))
+
+    assert gw.kline_calls == [("BTCUSDT", "1", 200)]
+    await rt.shutdown()
+
+
+async def test_market_ws_starts_after_watchlist_and_updates_kline_freshness(redis):
+    class WsGateway(FakeGateway):
+        def __init__(self):
+            super().__init__()
+            self.ws_symbols = []
+            self.stop_count = 0
+            self.on_candle = None
+
+        def start_market_websocket(self, *, symbols, on_candle=None, **_kwargs):
+            self.ws_symbols.append(list(symbols))
+            self.on_candle = on_candle
+
+        def stop_market_websocket(self):
+            self.stop_count += 1
+
+    gw = WsGateway()
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+
+    rt._watchlist = ["BTCUSDT"]
+    rt._start_market_ws()
+    assert gw.ws_symbols[-1] == ["BTCUSDT"]
+
+    gw.on_candle(candle(symbol="BTCUSDT", interval="1", open_time_ms=60_000))
+    assert rt._collector.last_kline_ms("BTCUSDT", "1") is not None
+
+    rt._watchlist = ["ETHUSDT"]
+    rt._start_market_ws()
+    assert gw.stop_count == 1
+    assert gw.ws_symbols[-1] == ["ETHUSDT"]
+    await rt.shutdown()
+
+
 async def test_close_position_command_closes_bot_position(redis):
     gw = FakeGateway()
     gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1"))

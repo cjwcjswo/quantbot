@@ -20,6 +20,8 @@ def test_loads_repo_config():
     assert cfg.risk.account_risk_per_trade_percent == 1.0
     assert cfg.bot.max_symbols_to_watch == 20
     assert cfg.scanner.max_candidates == 20
+    assert cfg.scanner.kline_1m_refresh_sec == 60
+    assert cfg.data_quality.max_kline_delay_sec == 90
     assert cfg.orders.partial_fill_min_ratio_to_keep == 0.70
     assert cfg.orders.scout_order_type == "LIMIT"
     assert cfg.orders.breakout_order_type == "AGGRESSIVE_LIMIT"
