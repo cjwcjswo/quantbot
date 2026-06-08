@@ -60,7 +60,7 @@ class PositionManager:
         self._stag_reduced: set[str] = set()
         self._scenario_recovery: dict[str, int] = {}
         self._scenario_reduced: set[tuple[str, str]] = set()
-        self._break_level_fail_closes: dict[str, int] = {}
+        self._break_level_fail_closes: dict[tuple[str, str], tuple[int | None, int]] = {}
         self._scout_ema_reclaim_counts: dict[str, int] = {}
         self._runner_ema_break_counts: dict[str, int] = {}
         self._runner_weak_signal_counts: dict[str, int] = {}
@@ -1394,16 +1394,21 @@ class PositionManager:
         """2 consecutive 1m closes beyond the breakout/breakdown level (§14.5)."""
         if position.breakout_level is None:
             return False
+        key = self._position_scenario_key(position)
+        open_time = candle.open_time_ms if candle.open_time_ms > 0 else None
         wrong_side = (
             candle.close < position.breakout_level
             if position.side == PositionSide.LONG
             else candle.close > position.breakout_level
         )
         if wrong_side:
-            count = self._break_level_fail_closes.get(position.symbol, 0) + 1
-            self._break_level_fail_closes[position.symbol] = count
+            last_open_time, prev_count = self._break_level_fail_closes.get(key, (None, 0))
+            if open_time is not None and open_time == last_open_time:
+                return prev_count >= 2
+            count = prev_count + 1
+            self._break_level_fail_closes[key] = (open_time, count)
             return count >= 2
-        self._break_level_fail_closes[position.symbol] = 0
+        self._break_level_fail_closes.pop(key, None)
         return False
 
     def _stagnation_action(

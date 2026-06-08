@@ -740,6 +740,66 @@ def test_runner_strong_opposite_candle_requires_confirmation(config):
     assert pos.runner_trend_strength == "WEAK"
 
 
+def test_runner_break_level_invalid_requires_unique_closed_bars(config):
+    pm = PositionManager(config)
+    pos = _pos(entry="64.02", risk="0.12", mode=EntryMode.RETEST_CONFIRM)
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("2.8")
+    pos.breakout_level = Decimal("64.24")
+    pos.highest_price = Decimal("64.30")
+    pos.stop_loss_price = Decimal("63.95")
+
+    first_failed_bar = candle(
+        open_time_ms=60_000,
+        o="64.29",
+        h="64.30",
+        l="64.14",
+        c="64.14",
+    )
+    hold_1m = snap(timeframe="1", close="64.18", ema20="64.00", rsi="55")
+    hold_5m = snap(timeframe="5", close="64.18", ema20="64.00")
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("64.18"),
+        atr=Decimal("0.12"),
+        candle_1m=first_failed_bar,
+        snapshot_1m=hold_1m,
+        snapshot_5m=hold_5m,
+    )
+    assert all(a.reason != ExitReason.RUNNER_SCENARIO_INVALID for a in actions)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("64.18"),
+        atr=Decimal("0.12"),
+        candle_1m=first_failed_bar,
+        snapshot_1m=hold_1m,
+        snapshot_5m=hold_5m,
+    )
+    assert all(a.reason != ExitReason.RUNNER_SCENARIO_INVALID for a in actions)
+
+    actions = pm.evaluate(
+        pos,
+        price=Decimal("64.18"),
+        atr=Decimal("0.12"),
+        candle_1m=candle(
+            open_time_ms=120_000,
+            o="64.14",
+            h="64.20",
+            l="64.13",
+            c="64.17",
+        ),
+        snapshot_1m=hold_1m,
+        snapshot_5m=hold_5m,
+    )
+
+    assert actions[-1].type == PositionActionType.EXIT
+    assert actions[-1].reason == ExitReason.RUNNER_SCENARIO_INVALID
+
+
 def test_runner_long_stop_never_moves_against_position(config):
     pm = PositionManager(config)
     pos = _pos()
