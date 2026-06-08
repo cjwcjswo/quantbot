@@ -784,16 +784,17 @@ class BotRuntime:
                     self._scanner_atr_percent[ticker.symbol] = snap.atr_percent
                     self._scanner_atr_updated_ms[ticker.symbol] = int(time.time() * 1000)
                     self._scanner_snapshots_15m[ticker.symbol] = snap
-                await self._collector.refresh_klines(
-                    ticker.symbol,
-                    "5",
-                    limit=200,
-                    min_refresh_ms=self.config.scanner.kline_5m_refresh_sec * 1000,
-                )
-                candles_5m = self._collector.store.get(ticker.symbol, "5")
-                self._scanner_snapshots_5m[ticker.symbol] = self._indicators.snapshot(
-                    ticker.symbol, "5", candles_5m
-                )
+                if self.config.scanner.refresh_5m_snapshots_in_scanner:
+                    await self._collector.refresh_klines(
+                        ticker.symbol,
+                        "5",
+                        limit=200,
+                        min_refresh_ms=self.config.scanner.kline_5m_refresh_sec * 1000,
+                    )
+                    candles_5m = self._collector.store.get(ticker.symbol, "5")
+                    self._scanner_snapshots_5m[ticker.symbol] = (
+                        self._indicators.snapshot(ticker.symbol, "5", candles_5m)
+                    )
             except Exception:
                 logger.debug("scanner indicator refresh failed for %s", ticker.symbol)
         self._watchlist = self._scanner.scan(

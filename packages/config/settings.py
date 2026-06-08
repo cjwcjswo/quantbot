@@ -66,6 +66,7 @@ class ScannerSection(_Section):
     atr_prefilter_multiple: int = 3
     atr_refresh_budget: int = 30
     atr_cache_ttl_sec: int = 900
+    refresh_5m_snapshots_in_scanner: bool = False
     kline_1m_refresh_sec: int = 60
     kline_5m_refresh_sec: int = 120
     kline_15m_refresh_sec: int = 300

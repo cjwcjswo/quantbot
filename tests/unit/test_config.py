@@ -20,7 +20,13 @@ def test_loads_repo_config():
     assert cfg.risk.account_risk_per_trade_percent == 2.5
     assert cfg.bot.max_symbols_to_watch == 20
     assert cfg.scanner.max_candidates == 20
+    assert cfg.scanner.refresh_interval_sec == 240
+    assert cfg.scanner.atr_refresh_budget == 10
+    assert cfg.scanner.atr_cache_ttl_sec == 1800
+    assert cfg.scanner.refresh_5m_snapshots_in_scanner is False
     assert cfg.scanner.kline_1m_refresh_sec == 60
+    assert cfg.scanner.kline_5m_refresh_sec == 300
+    assert cfg.api_rate_limit.max_rest_requests_per_second == 1
     assert cfg.data_quality.max_kline_delay_sec == 90
     assert cfg.orders.partial_fill_min_ratio_to_keep == 0.70
     assert cfg.orders.scout_order_type == "LIMIT"
@@ -114,6 +120,7 @@ def test_defaults_when_empty(tmp_path):
     assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.compression_min_score == 5
     assert cfg.entry.pre_breakout.no_compression_max_body_ratio == 0.85
+    assert cfg.scanner.refresh_5m_snapshots_in_scanner is False
     assert cfg.entry.pre_breakout.long_rsi_min == 44
     assert cfg.entry.pre_breakout.short_rsi_min == 32
     assert cfg.entry.breakout_confirm.position_fraction == 0.60

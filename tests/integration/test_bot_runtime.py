@@ -220,9 +220,9 @@ async def test_scanner_refresh_prefilters_before_kline_atr(redis):
 
     await rt._refresh_watchlist_if_due(force=True)
 
-    assert len(gw.kline_calls) == 12
-    assert [symbol for symbol, _, _ in gw.kline_calls[::2]] == symbols[:6]
-    assert [tf for _, tf, _ in gw.kline_calls[:12]] == ["15", "5"] * 6
+    assert len(gw.kline_calls) == 6
+    assert [symbol for symbol, _, _ in gw.kline_calls] == symbols[:6]
+    assert [tf for _, tf, _ in gw.kline_calls] == ["15"] * 6
     await rt.shutdown()
 
 

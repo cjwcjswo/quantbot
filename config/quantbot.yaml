@@ -29,13 +29,14 @@ universe:
   include_symbols: []
 
 scanner:
-  refresh_interval_sec: 180
+  refresh_interval_sec: 240
   max_candidates: 20
   atr_prefilter_multiple: 3
-  atr_refresh_budget: 30
-  atr_cache_ttl_sec: 900
+  atr_refresh_budget: 10
+  atr_cache_ttl_sec: 1800
+  refresh_5m_snapshots_in_scanner: false
   kline_1m_refresh_sec: 60
-  kline_5m_refresh_sec: 120
+  kline_5m_refresh_sec: 300
   kline_15m_refresh_sec: 300
   min_atr_percent: 0.15
   max_atr_percent: 7.0
@@ -343,7 +344,7 @@ clock_sync:
   block_trading_if_drift_ms_above: 1000
 
 api_rate_limit:
-  max_rest_requests_per_second: 2
+  max_rest_requests_per_second: 1
   max_order_requests_per_second: 2
   backoff_base_sec: 1
   backoff_max_sec: 30
