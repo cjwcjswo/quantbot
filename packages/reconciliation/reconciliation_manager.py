@@ -121,7 +121,8 @@ class ReconciliationManager:
         # Internal positions Bybit no longer reports => closed externally.
         for symbol, internal in list(self._state.positions.items()):
             if (
-                internal.status in (PositionStatus.ACTIVE, PositionStatus.PENDING)
+                internal.status
+                in (PositionStatus.ACTIVE, PositionStatus.PENDING, PositionStatus.CLOSING)
                 and symbol not in exch_by_symbol
             ):
                 if self._state.has_bot_order_settling_for_symbol(symbol):
@@ -210,7 +211,8 @@ class ReconciliationManager:
         if (
             internal is None
             or internal.source != PositionSource.BOT
-            or internal.status not in (PositionStatus.ACTIVE, PositionStatus.PENDING)
+            or internal.status
+            not in (PositionStatus.ACTIVE, PositionStatus.PENDING, PositionStatus.CLOSING)
             or not self._is_exit_side(order.side, internal.side)
             or (order.qty > 0 and internal.qty > 0 and order.qty > internal.qty)
         ):

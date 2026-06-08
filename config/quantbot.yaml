@@ -101,6 +101,10 @@ entry:
     score_mid_box_atr: 0.35
     score_compression_ratio: 0.8
     score_high_volume_ratio: 2.0
+    no_compression_max_body_ratio: 0.85
+    no_compression_long_max_close_position_in_range: 0.95
+    no_compression_short_min_close_position_in_range: 0.05
+    no_compression_chase_min_volume_ratio: 1.5
 
   breakout_confirm:
     position_fraction: 0.75
@@ -250,6 +254,7 @@ position:
     short_max_1m_rsi: 50
     tighten_on_1m_ema20_break_bars: 2
     tighten_on_strong_opposite_candle: true
+    tighten_on_strong_opposite_candle_bars: 2
     min_trailing_update_interval_sec: 5
     min_trailing_improvement_atr: 0.20
     log_post_exit_mfe: true
@@ -289,6 +294,7 @@ stagnation_exit:
   retest_confirm:
     tighten_after_bars: 8
     max_bars_without_1r: 16
+    scenario_invalid_grace_bars: 3
 
 cooldown:
   symbol_cooldown_after_loss_min: 15

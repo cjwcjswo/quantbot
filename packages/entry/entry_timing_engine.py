@@ -591,6 +591,20 @@ class EntryTimingEngine:
             reasons.append("VOLUME_TOO_LOW")
         elif vol >= exhaustion_vr:
             reasons.append("BREAKOUT_EXHAUSTION")
+        if (
+            not compression.has_compression
+            and m.valid
+            and m.body_ratio >= Decimal(str(scout.no_compression_max_body_ratio))
+            and vol < Decimal(str(scout.no_compression_chase_min_volume_ratio))
+        ):
+            if is_long and m.close_position_in_range >= Decimal(
+                str(scout.no_compression_long_max_close_position_in_range)
+            ):
+                reasons.append("SCOUT_NO_COMPRESSION_CHASE")
+            if not is_long and m.close_position_in_range <= Decimal(
+                str(scout.no_compression_short_min_close_position_in_range)
+            ):
+                reasons.append("SCOUT_NO_COMPRESSION_CHASE")
         if is_long:
             if count_rising_lows(ctx.candles_1m) < 2:
                 reasons.append("SCOUT_STRUCTURE_WEAK")

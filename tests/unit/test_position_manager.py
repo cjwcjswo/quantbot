@@ -162,7 +162,7 @@ def test_stagnation_retest_delays_then_tightens_then_closes(config):
 
 def test_scenario_invalid_reduce_then_exit(config):
     pm = PositionManager(config)
-    pos = _pos(mode=EntryMode.RETEST_CONFIRM)
+    pos = _pos(mode=EntryMode.BREAKOUT_CONFIRM)
     invalid_5m = snap(timeframe="5", close="98", ema20="100", atr="1", valid=True)
     flat = candle(h="100.1", l="99.9", c="100")
     # invalidation => REDUCE 50% and open 3-bar recovery window
@@ -179,6 +179,35 @@ def test_scenario_invalid_reduce_then_exit(config):
                            candle_1m=flat, snapshot_5m=invalid_5m)
     assert last[0].type == PositionActionType.EXIT
     assert last[0].reason == ExitReason.SCENARIO_INVALID
+
+
+def test_retest_scenario_invalid_waits_grace_bars(config):
+    pm = PositionManager(config)
+    pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=0)
+    invalid_5m = snap(timeframe="5", close="98", ema20="100", atr="1", valid=True)
+    flat = candle(h="100.1", l="99.9", c="100")
+
+    delayed = pm.evaluate(
+        pos,
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        candle_1m=flat,
+        snapshot_5m=invalid_5m,
+    )
+    assert delayed[0].type == PositionActionType.SCOUT_EVENT
+    assert delayed[0].event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    assert delayed[0].data["reason"] == "RETEST_SCENARIO_INVALID_GRACE"
+
+    pos.bars_since_entry = 3
+    reduced = pm.evaluate(
+        pos,
+        price=Decimal("100"),
+        atr=Decimal("1"),
+        candle_1m=flat,
+        snapshot_5m=invalid_5m,
+    )
+    assert reduced[0].type == PositionActionType.REDUCE
+    assert reduced[0].reason == ExitReason.SCENARIO_INVALID
 
 
 def test_scenario_invalid_after_two_closes_below_breakout_level(config):
@@ -613,6 +642,54 @@ def test_runner_strong_to_weak_requires_unique_bar_confirmation(config):
     )
     assert pos.runner_trend_strength == "WEAK"
     assert pos.runner_trailing_atr_multiplier == Decimal("2.0")
+
+
+def test_runner_strong_opposite_candle_requires_confirmation(config):
+    pm = PositionManager(config)
+    pos = _pos(side=PositionSide.SHORT, entry="100", risk="1")
+    pos.runner_mode_active = True
+    pos.partial_tp_done = True
+    pos.runner_trend_strength = "STRONG"
+    pos.runner_trailing_atr_multiplier = Decimal("2.8")
+    pos.lowest_price = Decimal("96")
+
+    hold_1m = snap(timeframe="1", close="98.8", ema20="99", rsi="40")
+    hold_5m = snap(timeframe="5", close="98.8", ema20="99")
+    first_bar = candle(
+        open_time_ms=60_000,
+        o="97",
+        h="99",
+        l="96.8",
+        c="98.8",
+    )
+
+    pm.evaluate(
+        pos,
+        price=Decimal("98.8"),
+        atr=Decimal("1"),
+        candle_1m=first_bar,
+        snapshot_1m=hold_1m,
+        snapshot_5m=hold_5m,
+        volume_ratio=Decimal("1.6"),
+    )
+    assert pos.runner_trend_strength == "STRONG"
+
+    pm.evaluate(
+        pos,
+        price=Decimal("98.8"),
+        atr=Decimal("1"),
+        candle_1m=candle(
+            open_time_ms=120_000,
+            o="97",
+            h="99",
+            l="96.8",
+            c="98.8",
+        ),
+        snapshot_1m=hold_1m,
+        snapshot_5m=hold_5m,
+        volume_ratio=Decimal("1.6"),
+    )
+    assert pos.runner_trend_strength == "WEAK"
 
 
 def test_runner_long_stop_never_moves_against_position(config):

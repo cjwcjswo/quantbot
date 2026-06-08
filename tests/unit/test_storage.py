@@ -214,6 +214,7 @@ async def test_restore_open_bot_positions_uses_latest_live_bot_snapshot(session_
     assert restored[0].source == PositionSource.BOT
     assert restored[0].entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
     assert restored[0].initial_risk_per_unit == Decimal("1")
+    assert restored[0].initial_qty == Decimal("1")
     assert restored[0].leverage == Decimal("3")
 
 

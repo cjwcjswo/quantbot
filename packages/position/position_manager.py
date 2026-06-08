@@ -178,7 +178,13 @@ class PositionManager:
         # 3. scenario invalidation (§14.5)
         if (
             position.runner_mode_active
-            and self._scenario_invalid(position, snapshot_5m, candle_1m, volume_ratio)
+            and self._scenario_invalid(
+                position,
+                snapshot_5m,
+                candle_1m,
+                volume_ratio,
+                include_counter_candle=False,
+            )
         ):
             return (
                 prefix_actions
@@ -196,15 +202,17 @@ class PositionManager:
                     self._exit(position, ExitReason.RUNNER_SCENARIO_INVALID),
                 ]
             )
-        scenario = self._scenario_action(
-            position,
-            r,
-            snapshot_5m,
-            candle_1m,
-            volume_ratio,
-            price=price,
-            atr=atr,
-        )
+        scenario = None
+        if not position.runner_mode_active:
+            scenario = self._scenario_action(
+                position,
+                r,
+                snapshot_5m,
+                candle_1m,
+                volume_ratio,
+                price=price,
+                atr=atr,
+            )
         if scenario is not None:
             return prefix_actions + runner_events + [scenario]
 
@@ -391,14 +399,17 @@ class PositionManager:
     ) -> bool:
         if old not in {"STRONG", "VERY_STRONG"} or strength != "WEAK":
             return False
-        if reason in {"ONE_MIN_EMA20_BREAK", "STRONG_OPPOSITE_CANDLE"}:
+
+        c = self.cfg.position.runner_mode
+        if reason == "STRONG_OPPOSITE_CANDLE":
+            required = max(1, int(c.tighten_on_strong_opposite_candle_bars))
+        elif reason == "ONE_MIN_EMA20_BREAK":
+            required = max(1, int(c.tighten_on_1m_ema20_break_bars))
+        elif reason == "FIVE_MIN_EMA20_BREAK":
             self._clear_runner_weak_signal(position.symbol)
             return False
-
-        required = max(
-            1,
-            int(self.cfg.position.runner_mode.tighten_on_1m_ema20_break_bars),
-        )
+        else:
+            required = max(1, int(c.tighten_on_1m_ema20_break_bars))
         if required <= 1:
             return False
 
@@ -1299,6 +1310,22 @@ class PositionManager:
             return None
 
         if self._scenario_invalid(position, snapshot_5m, candle, volume_ratio):
+            grace = self._scenario_invalid_grace_bars(position)
+            if grace > 0 and position.bars_since_entry <= grace:
+                return PositionAction(
+                    type=PositionActionType.SCOUT_EVENT,
+                    event_type="STAGNATION_DELAYED_BY_ENTRY_MODE",
+                    data=self._management_event_data(
+                        position,
+                        price=price,
+                        atr=atr,
+                        r=r,
+                        candle=candle,
+                        snapshot_5m=snapshot_5m,
+                        volume_ratio=volume_ratio,
+                        reason="RETEST_SCENARIO_INVALID_GRACE",
+                    ),
+                )
             # reduce 50% and open a 3-bar recovery window (impl doc §14.5)
             self._scenario_recovery[position.symbol] = 3
             return PositionAction(
@@ -1319,12 +1346,19 @@ class PositionManager:
             )
         return None
 
+    def _scenario_invalid_grace_bars(self, position: Position) -> int:
+        if position.entry_mode != EntryMode.RETEST_CONFIRM:
+            return 0
+        return max(0, int(self.cfg.stagnation_exit.retest_confirm.scenario_invalid_grace_bars))
+
     def _scenario_invalid(
         self,
         position: Position,
         snapshot_5m: IndicatorSnapshot | None,
         candle: Candle | None,
         volume_ratio: Decimal | None,
+        *,
+        include_counter_candle: bool = True,
     ) -> bool:
         long = position.side == PositionSide.LONG
         # 5m close vs 5m EMA20
@@ -1336,7 +1370,7 @@ class PositionManager:
         if candle is not None and self._break_level_invalid(position, candle):
             return True
         # strong counter-trend candle
-        if candle is not None and volume_ratio is not None:
+        if include_counter_candle and candle is not None and volume_ratio is not None:
             m = metrics_of(candle)
             if m.valid and m.body_ratio >= Decimal("0.55") and volume_ratio >= Decimal("1.5"):
                 if long and candle.close < candle.open and m.close_position_in_range <= Decimal("0.25"):

@@ -249,13 +249,14 @@ class ManualInterventionHandler:
         if self._logger is not None:
             await self._logger.log_position(internal, mode="LIVE")
             r_mult = None
+            risk_qty = internal.initial_qty or prev_qty
             if (
-                prev_qty > 0
+                risk_qty > 0
                 and internal.initial_risk_per_unit
                 and internal.initial_risk_per_unit > 0
             ):
                 r_mult = str(
-                    internal.realized_pnl / (internal.initial_risk_per_unit * prev_qty)
+                    internal.realized_pnl / (internal.initial_risk_per_unit * risk_qty)
                 )
             await self._logger.log_trade(
                 symbol=internal.symbol,

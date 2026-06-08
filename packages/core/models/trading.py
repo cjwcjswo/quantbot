@@ -120,6 +120,7 @@ class Position(_Mut):
     stop_loss_price: Decimal | None = None
     take_profit_price: Decimal | None = None
     initial_risk_per_unit: Decimal | None = None  # |entry - stop|, the "R" unit
+    initial_qty: Decimal | None = None
     liq_price: Decimal | None = None
 
     entry_mode: EntryMode | None = None

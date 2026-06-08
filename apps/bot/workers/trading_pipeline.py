@@ -669,6 +669,7 @@ class TradingService:
                 avg_entry_price=opened.fill_price, leverage=rd.leverage,
                 stop_loss_price=rd.stop_loss_price, take_profit_price=rd.take_profit_price,
                 initial_risk_per_unit=abs(opened.fill_price - rd.stop_loss_price),
+                initial_qty=opened.fill_qty,
                 entry_mode=decision.entry_mode, signal_score=sig.score,
                 strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
                 breakout_level=box_high if rd.side == PositionSide.LONG else box_low,
@@ -980,11 +981,17 @@ class TradingService:
         self._state.begin_position_update(pos.symbol)
         try:
             limit_price = pos.take_profit_price if prefer_limit else None
-            result = await self._executor.close(
-                symbol=pos.symbol, side=_exit_side(pos), qty=qty,
-                best_bid=best_bid, best_ask=best_ask,
-                prefer_limit=prefer_limit, limit_price=limit_price,
-            )
+            try:
+                result = await self._executor.close(
+                    symbol=pos.symbol, side=_exit_side(pos), qty=qty,
+                    best_bid=best_bid, best_ask=best_ask,
+                    prefer_limit=prefer_limit, limit_price=limit_price,
+                )
+            except Exception as exc:
+                if not self._is_exchange_already_flat_error(exc):
+                    raise
+                await self._mark_exchange_already_flat(pos, reason, best_bid, best_ask)
+                return
             if pos.status == PositionStatus.CLOSED:
                 return
             filled_qty = result.fill_qty
@@ -1014,13 +1021,14 @@ class TradingService:
                 await self._logger.log_position(pos, mode=self.mode.value)
                 if pos.status == PositionStatus.CLOSED:
                     r_mult = None
+                    risk_qty = pos.initial_qty or filled_qty
                     if (
                         pos.initial_risk_per_unit
                         and pos.initial_risk_per_unit > 0
-                        and filled_qty > 0
+                        and risk_qty > 0
                     ):
                         r_mult = str(
-                            pos.realized_pnl / (pos.initial_risk_per_unit * filled_qty)
+                            pos.realized_pnl / (pos.initial_risk_per_unit * risk_qty)
                         )
                     await self._logger.log_trade(
                         symbol=pos.symbol, side=pos.side.value, qty=str(filled_qty),
@@ -1059,6 +1067,91 @@ class TradingService:
                 )
         finally:
             self._state.end_position_update(pos.symbol)
+
+    @staticmethod
+    def _is_exchange_already_flat_error(exc: Exception) -> bool:
+        text = str(exc).lower()
+        return (
+            "110017" in text
+            or "current position is zero" in text
+            or "position is zero" in text
+            or "position size is zero" in text
+        )
+
+    async def _mark_exchange_already_flat(
+        self,
+        pos: Position,
+        reason: ExitReason,
+        best_bid: Decimal,
+        best_ask: Decimal,
+    ) -> None:
+        if pos.status == PositionStatus.CLOSED:
+            return
+        prev_qty = pos.qty
+        exit_price = self._estimated_flat_exit_price(pos, best_bid, best_ask)
+        direction = Decimal(1) if pos.side == PositionSide.LONG else Decimal(-1)
+        realized = (exit_price - pos.avg_entry_price) * prev_qty * direction
+        pos.realized_pnl += realized
+        pos.qty = Decimal("0")
+        pos.status = PositionStatus.CLOSED
+        pos.closed_at = datetime.now(timezone.utc)
+        pos.exit_reason = reason
+        if self._logger is not None:
+            await self._logger.log_position(pos, mode=self.mode.value)
+            r_mult = None
+            risk_qty = pos.initial_qty or prev_qty
+            if (
+                risk_qty > 0
+                and pos.initial_risk_per_unit
+                and pos.initial_risk_per_unit > 0
+            ):
+                r_mult = str(pos.realized_pnl / (pos.initial_risk_per_unit * risk_qty))
+            await self._logger.log_trade(
+                symbol=pos.symbol, side=pos.side.value, qty=str(prev_qty),
+                entry_price=str(pos.avg_entry_price), exit_price=str(exit_price),
+                realized_pnl=str(pos.realized_pnl),
+                exit_reason=reason.value if reason else None,
+                strategy_id=pos.strategy_id or None,
+                entry_mode=pos.entry_mode.value if pos.entry_mode else None,
+                mode=self.mode.value, leverage=str(pos.leverage),
+                fees=str(pos.fees_paid),
+                gross_pnl=str(pos.realized_pnl + pos.fees_paid),
+                net_pnl=str(pos.realized_pnl), r_multiple=r_mult,
+                opened_at=pos.opened_at, closed_at=pos.closed_at,
+            )
+        if reason == ExitReason.RUNNER_TRAILING_STOP:
+            self.start_post_exit_mfe(pos, exit_price=exit_price)
+        if self._guards.cooldown is not None and pos.entry_mode is not None:
+            self._guards.cooldown.record_result(
+                pos.symbol, pos.entry_mode, is_win=pos.realized_pnl > 0
+            )
+        if self._guards.kill_switch is not None:
+            self._guards.kill_switch.record_trade_result(
+                is_win=pos.realized_pnl > 0
+            )
+        await self._emit(
+            BotEvent(
+                type=BotEventType.POSITION_CLOSED,
+                symbol=pos.symbol,
+                message="Exchange already flat; marked closed",
+                data={
+                    "prev_qty": str(prev_qty),
+                    "realized_pnl": str(pos.realized_pnl),
+                    "reason": reason.value if reason else None,
+                    "source": "exchange_already_flat",
+                    "estimated_exit_price": str(exit_price),
+                    "estimated_realized_pnl": str(realized),
+                },
+            )
+        )
+
+    @staticmethod
+    def _estimated_flat_exit_price(
+        pos: Position, best_bid: Decimal, best_ask: Decimal
+    ) -> Decimal:
+        if pos.stop_loss_price is not None:
+            return pos.stop_loss_price
+        return best_bid if pos.side == PositionSide.LONG else best_ask
 
     @staticmethod
     def _as_fill(opened: OpenResult, symbol: str, side: Side) -> Fill:

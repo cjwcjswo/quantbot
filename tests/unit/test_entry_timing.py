@@ -380,6 +380,28 @@ def test_scout_without_compression_score_7_allowed_smaller_fraction(config):
     assert decision.compression_bonus_applied == Decimal("0")
 
 
+def test_scout_without_compression_chase_candle_blocked(config):
+    eng = EntryTimingEngine(config)
+    candles = _scout_candles_no_compression()
+    candles[-1] = candle(
+        interval="1",
+        open_time_ms=119 * 60_000,
+        o="100.16",
+        h="100.60",
+        l="100.15",
+        c="100.59",
+    )
+    ctx = _ctx(
+        candles_1m=candles,
+        box_high="100.6",
+        s1_kwargs={"ema20": "100", "rsi": "64", "volume_ratio": "1.0", "atr": "1"},
+    )
+    decision = eng.evaluate(ctx)
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "SCOUT_NO_COMPRESSION_CHASE"
+    assert eng.last_no_entry_reason["compression_mode"] == "WITHOUT_COMPRESSION"
+
+
 def test_scout_without_compression_score_6_blocked(config):
     eng = EntryTimingEngine(config)
     candles = _scout_candles_no_compression()

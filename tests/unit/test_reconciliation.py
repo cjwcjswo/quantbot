@@ -181,6 +181,30 @@ async def test_external_close_marks_closed(config, events):
     assert BotEventType.POSITION_CLOSED in events.types()
 
 
+async def test_closing_bot_position_marked_closed_when_exchange_flat(config, events):
+    logger = _ExchangeCloseLogger()
+    state, _gw, recon = _make(config, events, trade_logger=logger)
+    pos = _bot_position(qty="2")
+    pos.status = PositionStatus.CLOSING
+    pos.stop_loss_price = Decimal("101")
+    pos.initial_risk_per_unit = Decimal("1")
+    pos.initial_qty = Decimal("4")
+    pos.runner_mode_active = True
+    pos.trailing_active = True
+    pos.realized_pnl = Decimal("2")
+    state.positions[pos.symbol] = pos
+
+    result = await recon.reconcile_once()
+
+    assert pos.status == PositionStatus.CLOSED
+    assert pos.qty == Decimal("0")
+    assert pos.exit_reason == ExitReason.RUNNER_TRAILING_STOP
+    assert "BTCUSDT" in result.exchange_closes
+    assert BotEventType.POSITION_CLOSED in events.types()
+    assert BotEventType.RUNNER_TRAILING_STOP in events.types()
+    assert logger.trades[0]["r_multiple"] == "1"
+
+
 async def test_external_position_closed_when_exchange_flat(config, events):
     state, gw, recon = _make(config, events)
     pos = Position(

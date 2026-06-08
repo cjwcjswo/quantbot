@@ -12,8 +12,9 @@ from apps.bot.workers.trading_pipeline import (
     PaperExecutor,
     TradingService,
 )
-from packages.core.enums import BotMode, BotState, PositionStatus, ScoutState
+from packages.core.enums import BotMode, BotState, ExitReason, PositionStatus, ScoutState
 from packages.core.enums import EntryMode, PositionSide, PositionSource, SignalDirection
+from packages.core.events import BotEventType
 from packages.core.models import ExchangePosition, Position
 from packages.core.models import OrderBook, OrderBookLevel
 from packages.entry import EntryTimingEngine
@@ -98,7 +99,8 @@ def _short_retest_candles():
 
 
 def _make_service(
-    config, *, mode, executor, guards=None, protection=None, events=None, state=None
+    config, *, mode, executor, guards=None, protection=None, events=None, state=None,
+    trade_logger=None,
 ):
     registry = StrategyRegistry()
     registry.register(TrendFollowingStrategy(config))
@@ -114,6 +116,7 @@ def _make_service(
         guards=guards,
         protection_manager=protection,
         event_bus=bus,
+        trade_logger=trade_logger,
     )
 
 
@@ -524,5 +527,68 @@ async def test_close_settlement_does_not_trigger_manual_mismatch(config, events)
     assert pos.qty == Decimal("16.9")
     assert pos.manual_added_qty == Decimal("0")
     assert not state.new_entries_paused()
-    from packages.core.events import BotEventType
     assert BotEventType.MANUAL_PARTIAL_CLOSE_DETECTED not in events.types()
+
+
+async def test_close_marks_position_closed_when_exchange_already_flat(config, events):
+    class AlreadyFlatExecutor:
+        async def open(self, **_kwargs):  # pragma: no cover - not used here
+            raise AssertionError("open should not be called")
+
+        async def close(self, **_kwargs):
+            raise RuntimeError(
+                "current position is zero, cannot fix reduce-only order qty "
+                "(ErrCode: 110017)"
+            )
+
+    class Logger:
+        def __init__(self):
+            self.positions = []
+            self.trades = []
+
+        async def log_position(self, position, mode=None, protection_status=None):
+            self.positions.append((position, mode, protection_status))
+
+        async def log_trade(self, **kwargs):
+            self.trades.append(kwargs)
+
+    logger = Logger()
+    pos = Position(
+        symbol="PENGUUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("50"),
+        avg_entry_price=Decimal("100"),
+        stop_loss_price=Decimal("101"),
+        initial_risk_per_unit=Decimal("1"),
+        initial_qty=Decimal("100"),
+        realized_pnl=Decimal("50"),
+        entry_mode=EntryMode.PRE_BREAKOUT_SCOUT,
+        runner_mode_active=True,
+    )
+    state = RuntimeState()
+    state.positions[pos.symbol] = pos
+    service = _make_service(
+        config,
+        mode=BotMode.LIVE,
+        executor=AlreadyFlatExecutor(),
+        events=events,
+        state=state,
+        trade_logger=logger,
+    )
+
+    ok = await service.close_position(
+        "PENGUUSDT",
+        best_bid=Decimal("100.9"),
+        best_ask=Decimal("101.1"),
+        reason=ExitReason.RUNNER_TRAILING_STOP,
+    )
+
+    assert ok is True
+    assert pos.status == PositionStatus.CLOSED
+    assert pos.qty == Decimal("0")
+    assert events.of_type(BotEventType.POSITION_CLOSED)[-1].data["source"] == (
+        "exchange_already_flat"
+    )
+    assert logger.trades[0]["r_multiple"] == "1"

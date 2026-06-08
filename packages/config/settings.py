@@ -137,6 +137,10 @@ class PreBreakoutEntry(_Section):
     score_mid_box_atr: float = 0.35
     score_compression_ratio: float = 0.8
     score_high_volume_ratio: float = 2.0
+    no_compression_max_body_ratio: float = 0.85
+    no_compression_long_max_close_position_in_range: float = 0.95
+    no_compression_short_min_close_position_in_range: float = 0.05
+    no_compression_chase_min_volume_ratio: float = 1.5
 
 
 class BreakoutConfirmEntry(_Section):
@@ -326,6 +330,7 @@ class RunnerModeSection(_Section):
     short_max_1m_rsi: float = 50
     tighten_on_1m_ema20_break_bars: int = 2
     tighten_on_strong_opposite_candle: bool = True
+    tighten_on_strong_opposite_candle_bars: int = 2
     min_trailing_update_interval_sec: int = 5
     min_trailing_improvement_atr: float = 0.20
     log_post_exit_mfe: bool = True
@@ -360,6 +365,7 @@ class StagnationBreakout(_Section):
 class StagnationRetest(_Section):
     tighten_after_bars: int = 8
     max_bars_without_1r: int = 16
+    scenario_invalid_grace_bars: int = 3
 
 
 class StagnationExitSection(_Section):

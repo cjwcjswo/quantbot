@@ -325,6 +325,22 @@ class TradeLogger:
                 select(PositionRow).order_by(PositionRow.id.desc())
             )).scalars().all()
 
+        initial_qty_by_symbol: dict[str, Decimal] = {}
+        for row in rows:
+            if row.status not in ("PENDING", "ACTIVE", "CLOSING"):
+                continue
+            if row.source != "BOT":
+                continue
+            if not _matches_live_mode(row.mode, mode):
+                continue
+            qty = _dec_or_none(row.qty)
+            if qty is None or qty <= 0:
+                continue
+            initial_qty_by_symbol[row.symbol] = max(
+                qty,
+                initial_qty_by_symbol.get(row.symbol, Decimal("0")),
+            )
+
         positions: list[Position] = []
         seen: set[str] = set()
         for row in rows:
@@ -369,6 +385,7 @@ class TradeLogger:
                     stop_loss_price=stop_loss,
                     take_profit_price=take_profit,
                     initial_risk_per_unit=initial_risk,
+                    initial_qty=initial_qty_by_symbol.get(row.symbol, qty),
                     entry_mode=entry_mode,
                     realized_pnl=_dec_or_none(row.realized_pnl) or Decimal("0"),
                     unrealized_pnl=_dec_or_none(row.unrealized_pnl) or Decimal("0"),

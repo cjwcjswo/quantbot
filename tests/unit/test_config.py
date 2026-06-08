@@ -42,6 +42,10 @@ def test_loads_repo_config():
     assert cfg.entry.pre_breakout.no_compression_min_score == 7
     assert cfg.entry.pre_breakout.compression_position_fraction == 0.60
     assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.30
+    assert cfg.entry.pre_breakout.no_compression_max_body_ratio == 0.85
+    assert cfg.entry.pre_breakout.no_compression_long_max_close_position_in_range == 0.95
+    assert cfg.entry.pre_breakout.no_compression_short_min_close_position_in_range == 0.05
+    assert cfg.entry.pre_breakout.no_compression_chase_min_volume_ratio == 1.5
     assert cfg.entry.pre_breakout.long_rsi_min == 44
     assert cfg.entry.pre_breakout.long_rsi_max == 68
     assert cfg.entry.pre_breakout.short_rsi_min == 32
@@ -70,6 +74,7 @@ def test_loads_repo_config():
     assert cfg.position.runner_mode.weak_trend_trailing_atr == 2.0
     assert cfg.position.runner_mode.strong_trend_trailing_atr == 2.8
     assert cfg.position.runner_mode.very_strong_trend_trailing_atr == 3.2
+    assert cfg.position.runner_mode.tighten_on_strong_opposite_candle_bars == 2
     assert cfg.position.runner_mode.post_exit_mfe_windows_min == [5, 15, 30]
     assert cfg.stagnation_exit.pre_breakout_scout.max_bars_without_breakout == 10
     assert cfg.stagnation_exit.pre_breakout_scout.min_progress_r == 0.4
@@ -77,6 +82,7 @@ def test_loads_repo_config():
     assert cfg.stagnation_exit.breakout_confirm.max_bars_without_1r == 14
     assert cfg.stagnation_exit.retest_confirm.tighten_after_bars == 8
     assert cfg.stagnation_exit.retest_confirm.max_bars_without_1r == 16
+    assert cfg.stagnation_exit.retest_confirm.scenario_invalid_grace_bars == 3
     assert cfg.risk.scout_max_stop_distance_atr == 3.5
     assert cfg.risk.retest_max_stop_distance_atr == 1.8
     assert cfg.risk.scout_max_leverage == 6
@@ -107,6 +113,7 @@ def test_defaults_when_empty(tmp_path):
     assert cfg.entry.pre_breakout.no_compression_position_fraction == 0.15
     assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.compression_min_score == 5
+    assert cfg.entry.pre_breakout.no_compression_max_body_ratio == 0.85
     assert cfg.entry.pre_breakout.long_rsi_min == 44
     assert cfg.entry.pre_breakout.short_rsi_min == 32
     assert cfg.entry.breakout_confirm.position_fraction == 0.60
