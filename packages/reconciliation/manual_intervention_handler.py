@@ -282,9 +282,19 @@ class ManualInterventionHandler:
     def _exchange_protection_exit_reason(internal: Position) -> ExitReason:
         if internal.runner_mode_active:
             return ExitReason.RUNNER_TRAILING_STOP
-        if internal.trailing_active:
+        if internal.trailing_active and ManualInterventionHandler._stop_protects_profit(
+            internal
+        ):
             return ExitReason.TRAILING_STOP
         return ExitReason.STOP_LOSS
+
+    @staticmethod
+    def _stop_protects_profit(internal: Position) -> bool:
+        if internal.stop_loss_price is None:
+            return False
+        if internal.side.value == "LONG":
+            return internal.stop_loss_price >= internal.avg_entry_price
+        return internal.stop_loss_price <= internal.avg_entry_price
 
     @staticmethod
     def _estimated_exchange_exit_price(internal: Position) -> Decimal:

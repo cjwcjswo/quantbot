@@ -306,6 +306,23 @@ async def test_bot_exchange_initial_sl_close_marked_stop_loss(config, events):
     assert logger.trades[0]["realized_pnl"] == "-1"
 
 
+async def test_bot_exchange_stop_below_entry_not_marked_trailing(config, events):
+    logger = _ExchangeCloseLogger()
+    state, _gw, recon = _make(config, events, trade_logger=logger)
+    pos = _bot_position()
+    pos.stop_loss_price = Decimal("99")
+    pos.initial_risk_per_unit = Decimal("1")
+    pos.trailing_active = True
+    state.positions[pos.symbol] = pos
+
+    await recon.reconcile_once()
+
+    assert pos.exit_reason == ExitReason.STOP_LOSS
+    closed = events.of_type(BotEventType.POSITION_CLOSED)[-1]
+    assert closed.data["reason"] == "STOP_LOSS"
+    assert logger.trades[0]["exit_reason"] == "STOP_LOSS"
+
+
 async def test_known_order_not_flagged_external(config, events):
     state, gw, recon = _make(config, events)
     from packages.core.models import Order

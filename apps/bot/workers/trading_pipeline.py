@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from typing import Awaitable, Callable, Protocol
 
 from apps.bot.runtime.runtime_state import RuntimeState
@@ -45,6 +45,7 @@ from packages.execution import PaperExecutionEngine
 from packages.position import PositionActionType, PositionManager
 from packages.risk import RiskContext, RiskDecision, RiskManager
 from packages.signal import SignalEngine, build_watch_entry
+from packages.universe import round_price_to_tick
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,14 @@ class CloseResult:
     fill_qty: Decimal
     fee: Decimal = Decimal(0)
     realized: Decimal | None = None  # None => service computes from avg
+
+
+@dataclass(frozen=True)
+class FillAdjustedLevels:
+    stop_loss_price: Decimal | None
+    take_profit_price: Decimal | None
+    initial_risk_per_unit: Decimal | None
+    metadata: dict[str, str]
 
 
 class Executor(Protocol):
@@ -318,6 +327,105 @@ class TradingService:
             return
         if slip > max_slip:
             self._guards.kill_switch.record_slippage_breach()
+
+    def _fill_adjusted_levels(
+        self,
+        *,
+        rd: RiskDecision,
+        planned_entry_price: Decimal,
+        fill_price: Decimal,
+        symbol_meta: SymbolMeta,
+    ) -> FillAdjustedLevels:
+        stop = rd.stop_loss_price
+        if stop is None or rd.side is None:
+            return FillAdjustedLevels(
+                stop_loss_price=stop,
+                take_profit_price=rd.take_profit_price,
+                initial_risk_per_unit=None,
+                metadata={},
+            )
+
+        planned_risk = abs(planned_entry_price - stop)
+        actual_risk = abs(fill_price - stop)
+        metadata: dict[str, str] = {
+            "planned_entry_price": str(planned_entry_price),
+            "fill_stop_distance": str(actual_risk),
+        }
+        if planned_risk <= 0:
+            return FillAdjustedLevels(
+                stop_loss_price=stop,
+                take_profit_price=rd.take_profit_price,
+                initial_risk_per_unit=actual_risk,
+                metadata=metadata,
+            )
+
+        adjusted_stop = stop
+        adjusted_tp = rd.take_profit_price
+        adjusted = actual_risk < planned_risk
+        if adjusted:
+            adjusted_stop = self._stop_from_risk_distance(
+                fill_price, planned_risk, rd.side, symbol_meta.tick_size
+            )
+            risk = abs(fill_price - adjusted_stop)
+            if rd.take_profit_price is not None:
+                target_r = Decimal(str(self.cfg.tpsl.initial_take_profit_r))
+                raw_tp = (
+                    fill_price + risk * target_r
+                    if rd.side == PositionSide.LONG
+                    else fill_price - risk * target_r
+                )
+                adjusted_tp = round_price_to_tick(raw_tp, symbol_meta.tick_size)
+            metadata.update(
+                {
+                    "fill_based_stop_adjusted": "true",
+                    "pre_adjust_stop_loss_price": str(stop),
+                    "planned_stop_distance": str(planned_risk),
+                    "adjusted_stop_loss_price": str(adjusted_stop),
+                    "adjusted_take_profit_price": str(adjusted_tp)
+                    if adjusted_tp is not None
+                    else None,
+                }
+            )
+        else:
+            risk = actual_risk
+            metadata["fill_based_stop_adjusted"] = "false"
+
+        metadata.update(
+            {
+                "effective_stop_loss_price": str(adjusted_stop),
+                "effective_take_profit_price": str(adjusted_tp)
+                if adjusted_tp is not None
+                else None,
+                "effective_stop_distance": str(risk),
+                "effective_stop_distance_percent": str((risk / fill_price) * Decimal("100"))
+                if fill_price > 0
+                else None,
+            }
+        )
+        return FillAdjustedLevels(
+            stop_loss_price=adjusted_stop,
+            take_profit_price=adjusted_tp,
+            initial_risk_per_unit=risk,
+            metadata={k: v for k, v in metadata.items() if v is not None},
+        )
+
+    @staticmethod
+    def _stop_from_risk_distance(
+        fill_price: Decimal,
+        risk: Decimal,
+        side: PositionSide,
+        tick: Decimal,
+    ) -> Decimal:
+        raw = (
+            fill_price - risk
+            if side == PositionSide.LONG
+            else fill_price + risk
+        )
+        if tick <= 0:
+            return raw
+        rounding = ROUND_FLOOR if side == PositionSide.LONG else ROUND_CEILING
+        ticks = (raw / tick).to_integral_value(rounding=rounding)
+        return ticks * tick
 
     async def _emit_no_entry(
         self,
@@ -662,13 +770,20 @@ class TradingService:
                                           message=opened.reason))
                 return None
             self._record_slippage_if_breached(side, opened.fill_price, best_bid, best_ask)
+            adjusted_levels = self._fill_adjusted_levels(
+                rd=rd,
+                planned_entry_price=entry_price,
+                fill_price=opened.fill_price,
+                symbol_meta=symbol_meta,
+            )
 
             pos = Position(
                 symbol=symbol, side=rd.side, status=PositionStatus.PENDING,
                 source=PositionSource.BOT, qty=opened.fill_qty,
                 avg_entry_price=opened.fill_price, leverage=rd.leverage,
-                stop_loss_price=rd.stop_loss_price, take_profit_price=rd.take_profit_price,
-                initial_risk_per_unit=abs(opened.fill_price - rd.stop_loss_price),
+                stop_loss_price=adjusted_levels.stop_loss_price,
+                take_profit_price=adjusted_levels.take_profit_price,
+                initial_risk_per_unit=adjusted_levels.initial_risk_per_unit,
                 initial_qty=opened.fill_qty,
                 entry_mode=decision.entry_mode, signal_score=sig.score,
                 strategy_id=sig.strategy, strategy_reason=sig.reason, fees_paid=opened.fee,
@@ -736,6 +851,7 @@ class TradingService:
         }
         if rd.stop_metadata:
             opened_data.update(rd.stop_metadata)
+        opened_data.update(adjusted_levels.metadata)
         if decision.compression_mode is not None:
             opened_data.update(
                 {

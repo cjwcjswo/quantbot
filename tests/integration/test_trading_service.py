@@ -1,6 +1,7 @@
 """Guard gating + LIVE entry/protection through TradingService (impl doc §2.1, §5, §16)."""
 
 from decimal import Decimal
+from types import SimpleNamespace
 
 from apps.bot.runtime.bot_state_machine import BotStateMachine
 from apps.bot.runtime.runtime_state import RuntimeState
@@ -9,6 +10,7 @@ from apps.bot.workers.trading_pipeline import (
     GuardSet,
     LiveExecutor,
     MarketContext,
+    OpenResult,
     PaperExecutor,
     TradingService,
 )
@@ -136,6 +138,39 @@ def _deep_book():
         bids=(OrderBookLevel(price=Decimal("100.98"), size=Decimal("1000")),),
         asks=(OrderBookLevel(price=Decimal("101.0"), size=Decimal("1000")),),
     )
+
+
+class _StaticFillExecutor:
+    mode = BotMode.LIVE
+
+    def __init__(self, fill_price: Decimal) -> None:
+        self.fill_price = fill_price
+
+    async def open(
+        self, *, symbol, side, qty, leverage, best_bid, best_ask, entry_mode,
+        stop_loss=None, take_profit=None,
+    ):
+        return OpenResult(
+            ok=True,
+            fill_price=self.fill_price,
+            fill_qty=qty,
+        )
+
+    async def close(
+        self, *, symbol, side, qty, best_bid, best_ask, prefer_limit=False,
+        limit_price=None,
+    ):
+        return CloseResult(self.fill_price, qty)
+
+
+class _CaptureProtection:
+    def __init__(self) -> None:
+        self.position = None
+
+    async def protect(self, position):
+        self.position = position
+        position.status = PositionStatus.ACTIVE
+        return SimpleNamespace(protected=True, reason="")
 
 
 async def _paper_service(config, guards=None, events=None):
@@ -357,6 +392,32 @@ async def test_live_entry_protected_then_active(config, events):
     assert gw.trading_stops == []
     from packages.core.events import BotEventType
     assert BotEventType.TPSL_VERIFIED in events.types()
+
+
+async def test_live_entry_adjusts_stop_from_actual_fill_price(config, events):
+    config.bot.mode = BotMode.LIVE
+    protection = _CaptureProtection()
+    service = _make_service(
+        config,
+        mode=BotMode.LIVE,
+        executor=_StaticFillExecutor(Decimal("100.2")),
+        protection=protection,
+        events=events,
+    )
+
+    pos = await service.evaluate_entry(**_entry_kwargs())
+
+    assert pos is not None
+    assert pos.status == PositionStatus.ACTIVE
+    assert pos.stop_loss_price == Decimal("99.2")
+    assert pos.initial_risk_per_unit == Decimal("1.0")
+    assert protection.position is pos
+    opened = events.of_type(BotEventType.POSITION_OPENED)[0]
+    assert opened.data["pre_adjust_stop_loss_price"] == "100.0"
+    assert opened.data["fill_based_stop_adjusted"] == "true"
+    assert opened.data["adjusted_stop_loss_price"] == "99.2"
+    assert opened.data["effective_stop_loss_price"] == "99.2"
+    assert opened.data["effective_stop_distance"] == "1.0"
 
 
 async def test_live_retest_exchange_sl_uses_selected_structure_stop(config, events):
