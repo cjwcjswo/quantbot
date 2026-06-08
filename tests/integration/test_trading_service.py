@@ -102,8 +102,9 @@ def _short_retest_candles():
 
 def _make_service(
     config, *, mode, executor, guards=None, protection=None, events=None, state=None,
-    trade_logger=None,
+    trade_logger=None, require_breakout_hold=False,
 ):
+    config.entry.breakout_confirm.require_next_candle_hold = require_breakout_hold
     registry = StrategyRegistry()
     registry.register(TrendFollowingStrategy(config))
     bus = EventBus(redis=None, sink=events) if events is not None else None

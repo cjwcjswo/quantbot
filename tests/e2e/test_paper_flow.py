@@ -51,6 +51,7 @@ def _breakout_candles():
 
 
 def _service(config, session_factory):
+    config.entry.breakout_confirm.require_next_candle_hold = False
     registry = StrategyRegistry()
     registry.register(TrendFollowingStrategy(config))
     state = RuntimeState()

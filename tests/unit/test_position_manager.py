@@ -183,8 +183,7 @@ def test_scenario_invalid_reduce_then_exit(config):
 
 def test_scenario_invalid_reduce_only_once_after_profit_recovery(config):
     pm = PositionManager(config)
-    pos = _scout_pos(side=PositionSide.LONG, bars=4)
-    pos.scout_state = ScoutState.ACTIVE_TREND
+    pos = _pos(mode=EntryMode.BREAKOUT_CONFIRM, side=PositionSide.LONG, bars=4)
     hold_5m = snap(timeframe="5", close="101", ema20="100", atr="1", valid=True)
     strong_counter = candle(
         open_time_ms=60_000,
@@ -524,23 +523,80 @@ def test_scout_stagnation_keeps_position_when_min_progress_reached(config):
     assert actions[0].data["reason"] == "SCOUT_STAGNATION_DELAYED"
 
 
-def test_active_trend_scout_uses_general_scenario_invalid(config):
+def test_active_trend_scout_confirms_general_scenario_invalid(config):
     pm = PositionManager(config)
     pos = _scout_pos(side=PositionSide.SHORT, bars=3)
     pos.scout_state = ScoutState.ACTIVE_TREND
     invalid_5m = snap(timeframe="5", close="102", ema20="100", atr="1", valid=True)
 
-    actions = pm.evaluate(
+    first = pm.evaluate(
         pos,
         price=Decimal("100.5"),
         atr=Decimal("1"),
-        candle_1m=candle(o="100.4", h="100.7", l="100.3", c="100.5"),
+        candle_1m=candle(
+            open_time_ms=60_000,
+            o="100.4",
+            h="100.7",
+            l="100.3",
+            c="100.5",
+        ),
         snapshot_5m=invalid_5m,
     )
 
-    assert actions[0].type == PositionActionType.REDUCE
-    assert actions[0].reason == ExitReason.SCENARIO_INVALID
-    assert actions[0].event_type == "SCENARIO_INVALID_REDUCE"
+    assert first[0].type == PositionActionType.SCOUT_EVENT
+    assert first[0].event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    assert first[0].data["reason"] == "SCOUT_SCENARIO_INVALID_CONFIRMING"
+
+    second = pm.evaluate(
+        pos,
+        price=Decimal("100.5"),
+        atr=Decimal("1"),
+        candle_1m=candle(
+            open_time_ms=120_000,
+            o="100.4",
+            h="100.7",
+            l="100.3",
+            c="100.5",
+        ),
+        snapshot_5m=invalid_5m,
+    )
+
+    assert second[0].type == PositionActionType.REDUCE
+    assert second[0].reason == ExitReason.SCENARIO_INVALID
+    assert second[0].event_type == "SCENARIO_INVALID_REDUCE"
+
+
+def test_active_trend_scout_same_invalid_candle_is_not_counted_twice(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.SHORT, bars=3)
+    pos.scout_state = ScoutState.ACTIVE_TREND
+    invalid_5m = snap(timeframe="5", close="102", ema20="100", atr="1", valid=True)
+    same_candle = candle(
+        open_time_ms=60_000,
+        o="100.4",
+        h="100.7",
+        l="100.3",
+        c="100.5",
+    )
+
+    first = pm.evaluate(
+        pos,
+        price=Decimal("100.5"),
+        atr=Decimal("1"),
+        candle_1m=same_candle,
+        snapshot_5m=invalid_5m,
+    )
+    second = pm.evaluate(
+        pos,
+        price=Decimal("100.5"),
+        atr=Decimal("1"),
+        candle_1m=same_candle,
+        snapshot_5m=invalid_5m,
+    )
+
+    assert first[0].type == PositionActionType.SCOUT_EVENT
+    assert second[0].type == PositionActionType.SCOUT_EVENT
+    assert second[0].data["reason"] == "SCOUT_SCENARIO_INVALID_CONFIRMING"
 
 
 def test_external_position_not_managed(config):

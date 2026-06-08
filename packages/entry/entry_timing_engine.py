@@ -67,6 +67,13 @@ class ScoutCompression:
     ratio: Decimal | None = None
 
 
+@dataclass(frozen=True)
+class PendingBreakout:
+    direction: SignalDirection
+    level: Decimal
+    open_time_ms: int | None
+
+
 def resolve_retest_stop_atr(
     atr_percent: Decimal,
     default_stop_atr: Decimal,
@@ -169,6 +176,7 @@ class EntryTimingEngine:
             tolerance_atr=Decimal(str(config.entry.retest_confirm.retest_tolerance_atr)),
             max_wait_candles=config.entry.retest_confirm.max_wait_candles,
         )
+        self._pending_breakouts: dict[str, PendingBreakout] = {}
         self.last_no_entry_reason: dict | None = None
 
     # ------------------------------------------------------------------ #
@@ -190,10 +198,62 @@ class EntryTimingEngine:
         self.retests.on_new_bar(ctx.symbol, last)
         modes = self.cfg.entry.enabled_modes
         is_long = ctx.direction == SignalDirection.LONG
+        pending_breakout = self._pending_breakouts.get(ctx.symbol)
+        if pending_breakout is not None:
+            if not modes.breakout_confirm or pending_breakout.direction != ctx.direction:
+                self._pending_breakouts.pop(ctx.symbol, None)
+            elif (
+                pending_breakout.open_time_ms is not None
+                and last.open_time_ms == pending_breakout.open_time_ms
+            ):
+                self._record_no_entry(
+                    "entry_timing",
+                    "BREAKOUT_HOLD_PENDING",
+                    entry_mode_candidate=EntryMode.BREAKOUT_CONFIRM.value,
+                    retest_pending_status="WAITING_NEXT_CANDLE",
+                )
+                return None
+            elif self._breakout_hold_confirmed(
+                ctx, last, m, atr1, is_long, pending_breakout
+            ):
+                self._pending_breakouts.pop(ctx.symbol, None)
+                return self._breakout_decision(ctx)
+            else:
+                self._pending_breakouts.pop(ctx.symbol, None)
+                if modes.retest_confirm:
+                    self.retests.register(
+                        ctx.symbol,
+                        ctx.direction,
+                        pending_breakout.level,
+                    )
+                self._record_no_entry(
+                    "entry_timing",
+                    "BREAKOUT_HOLD_FAILED",
+                    entry_mode_candidate=EntryMode.BREAKOUT_CONFIRM.value,
+                    retest_pending_status="REGISTERED"
+                    if modes.retest_confirm
+                    else "DISABLED",
+                )
+                return None
 
         if self._broke_out(ctx, last, atr1, is_long):
             quality_reason = self._breakout_quality_reason(ctx, m, is_long)
             if modes.breakout_confirm and quality_reason is None:
+                if self.cfg.entry.breakout_confirm.require_next_candle_hold:
+                    level = ctx.box_high if is_long else ctx.box_low
+                    open_time = last.open_time_ms if last.open_time_ms > 0 else None
+                    self._pending_breakouts[ctx.symbol] = PendingBreakout(
+                        direction=ctx.direction,
+                        level=level,
+                        open_time_ms=open_time,
+                    )
+                    self._record_no_entry(
+                        "entry_timing",
+                        "BREAKOUT_HOLD_PENDING",
+                        entry_mode_candidate=EntryMode.BREAKOUT_CONFIRM.value,
+                        retest_pending_status="WAITING_NEXT_CANDLE",
+                    )
+                    return None
                 return self._breakout_decision(ctx)
             # Exhaustion / unhealthy => register retest pending (impl doc §10.4).
             if modes.retest_confirm:
@@ -308,6 +368,23 @@ class EntryTimingEngine:
         self, ctx: EntryContext, m: CandleMetrics, is_long: bool
     ) -> bool:
         return self._breakout_quality_reason(ctx, m, is_long) is None
+
+    def _breakout_hold_confirmed(
+        self,
+        ctx: EntryContext,
+        last: Candle,
+        metrics: CandleMetrics,
+        atr1: Decimal,
+        is_long: bool,
+        pending: PendingBreakout,
+    ) -> bool:
+        margin = Decimal(str(self.cfg.entry.breakout_confirm.close_beyond_boundary_atr))
+        hold = (
+            last.close > pending.level + margin * atr1
+            if is_long
+            else last.close < pending.level - margin * atr1
+        )
+        return hold and self._breakout_quality_reason(ctx, metrics, is_long) is None
 
     # ------------------------------------------------------------------ #
     # decision builders

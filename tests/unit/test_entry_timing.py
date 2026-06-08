@@ -55,8 +55,29 @@ def _flat(n, price="100"):
 def test_healthy_breakout_returns_breakout_confirm(config):
     eng = EntryTimingEngine(config)
     candles = _flat(5, price="100")
-    breakout = candle(interval="1", o="100.2", h="101.1", l="100.0", c="101.0")
+    breakout = candle(
+        interval="1",
+        open_time_ms=5 * 60_000,
+        o="100.2",
+        h="101.1",
+        l="100.0",
+        c="101.0",
+    )
     candles.append(breakout)
+    pending = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
+    assert pending is None
+    assert eng.last_no_entry_reason["reason_code"] == "BREAKOUT_HOLD_PENDING"
+
+    candles.append(
+        candle(
+            interval="1",
+            open_time_ms=6 * 60_000,
+            o="100.5",
+            h="101.4",
+            l="100.45",
+            c="101.2",
+        )
+    )
     decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
     assert decision is not None
     assert decision.entry_mode == EntryMode.BREAKOUT_CONFIRM
@@ -65,6 +86,7 @@ def test_healthy_breakout_returns_breakout_confirm(config):
 
 
 def test_breakout_volume_threshold_uses_entry_config(config):
+    config.entry.breakout_confirm.require_next_candle_hold = False
     config.entry.breakout_confirm.volume_min_ratio = 1.2
     config.volume.min_breakout_volume_ratio = 9.0
     candles = _flat(5, price="100")
@@ -86,6 +108,39 @@ def test_breakout_volume_threshold_uses_entry_config(config):
     assert decision is None
     assert blocked.last_no_entry_reason["reason_code"] == "BREAKOUT_NOT_HEALTHY"
     assert blocked.last_no_entry_reason["breakout_quality_reason"] == "VOLUME_TOO_LOW"
+
+
+def test_breakout_hold_failure_registers_retest(config):
+    eng = EntryTimingEngine(config)
+    candles = _flat(5, price="100")
+    candles.append(
+        candle(
+            interval="1",
+            open_time_ms=5 * 60_000,
+            o="100.2",
+            h="101.1",
+            l="100.0",
+            c="101.0",
+        )
+    )
+
+    assert eng.evaluate(_ctx(candles_1m=candles, box_high="100")) is None
+    candles.append(
+        candle(
+            interval="1",
+            open_time_ms=6 * 60_000,
+            o="101.0",
+            h="101.1",
+            l="99.7",
+            c="99.95",
+        )
+    )
+    decision = eng.evaluate(_ctx(candles_1m=candles, box_high="100"))
+
+    assert decision is None
+    assert eng.last_no_entry_reason["reason_code"] == "BREAKOUT_HOLD_FAILED"
+    assert eng.last_no_entry_reason["retest_pending_status"] == "REGISTERED"
+    assert eng.retests.get("BTCUSDT") is not None
 
 
 def test_exhaustion_breakout_then_retest(config):

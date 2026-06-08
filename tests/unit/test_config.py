@@ -57,6 +57,7 @@ def test_loads_repo_config():
     assert cfg.entry.pre_breakout.short_rsi_min == 32
     assert cfg.entry.pre_breakout.short_rsi_max == 58
     assert cfg.entry.breakout_confirm.position_fraction == 0.75
+    assert cfg.entry.breakout_confirm.require_next_candle_hold is True
     assert cfg.entry.retest_confirm.position_fraction == 0.85
     assert cfg.entry.retest_confirm.stop_atr == 1.3
     assert cfg.volatility_adaptive_stop.enabled is True
@@ -67,6 +68,7 @@ def test_loads_repo_config():
         "PRE_BREAKOUT_SCOUT",
         "RETEST_CONFIRM",
     ]
+    assert cfg.structure_stop.max_stop_distance_atr == 2.5
     assert cfg.structure_stop.use_structure_stop_for_scout is True
     assert cfg.position.scout_management.enabled is True
     assert cfg.position.scout_management.grace_bars == 6
@@ -90,12 +92,14 @@ def test_loads_repo_config():
     assert cfg.stagnation_exit.retest_confirm.max_bars_without_1r == 16
     assert cfg.stagnation_exit.retest_confirm.scenario_invalid_grace_bars == 3
     assert cfg.risk.scout_max_stop_distance_atr == 3.5
-    assert cfg.risk.retest_max_stop_distance_atr == 1.8
+    assert cfg.risk.retest_max_stop_distance_atr == 2.5
     assert cfg.risk.scout_max_leverage == 6
     assert cfg.risk.breakout_max_leverage == 9
     assert cfg.risk.retest_max_leverage == 10
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
     assert cfg.risk.min_stop_distance_percent == 0.30
+    assert cfg.risk.breakout_min_stop_distance_percent == 0.30
+    assert cfg.risk.retest_min_stop_distance_percent == 0.40
     assert cfg.risk.max_stop_distance_atr == 1.8
     assert cfg.risk.thin_stop_distance_percent == 0.35
     assert cfg.risk.thin_stop_max_leverage == 8

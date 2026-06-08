@@ -149,6 +149,7 @@ class BreakoutConfirmEntry(_Section):
     volume_min_ratio: float = 1.3
     require_close_beyond_boundary: bool = True
     close_beyond_boundary_atr: float = 0.03
+    require_next_candle_hold: bool = False
     stop_atr: float = 1.0
 
 
@@ -260,9 +261,11 @@ class RiskSection(_Section):
     daily_loss_max_leverage: int = 2
     min_stop_distance_atr: float = 0.5
     min_stop_distance_percent: float = 0.30
+    breakout_min_stop_distance_percent: float = 0.30
+    retest_min_stop_distance_percent: float = 0.40
     max_stop_distance_atr: float = 1.8
     scout_max_stop_distance_atr: float = 3.5
-    retest_max_stop_distance_atr: float = 1.8
+    retest_max_stop_distance_atr: float = 2.5
     thin_stop_distance_percent: float = 0.35
     thin_stop_max_leverage: int = 8
     isolated_margin: bool = True

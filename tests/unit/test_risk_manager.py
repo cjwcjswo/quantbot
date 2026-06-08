@@ -180,14 +180,14 @@ def test_retest_min_stop_distance_percent_widens_low_atr_stop(config):
     )
 
     assert d.approved
-    assert d.stop_loss_price == Decimal("63.83")
+    assert d.stop_loss_price == Decimal("63.77")
     assert d.stop_metadata["atr_stop_price"] == "63.91"
-    assert d.stop_metadata["min_stop_distance_percent"] == "0.3"
-    assert d.stop_metadata["min_distance_stop_price"] == "63.83"
+    assert d.stop_metadata["min_stop_distance_percent"] == "0.4"
+    assert d.stop_metadata["min_distance_stop_price"] == "63.77"
     assert d.stop_metadata["min_distance_stop_applied"] is True
-    assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.30")
+    assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.40")
     assert d.qty < Decimal("20.56")
-    assert d.leverage < Decimal("12")
+    assert d.leverage <= Decimal("8")
 
 
 def test_breakout_min_stop_distance_percent_widens_low_atr_stop(config):
@@ -214,7 +214,7 @@ def test_thin_stop_caps_high_quality_leverage(config):
         config,
         decision=_decision(
             stop_atr="1.0",
-            mode=EntryMode.RETEST_CONFIRM,
+            mode=EntryMode.BREAKOUT_CONFIRM,
             frac="1.0",
             score="9",
         ),
@@ -268,7 +268,7 @@ def test_retest_rejects_above_retest_max_stop_distance(config):
     d = _approve(
         config,
         decision=_decision(
-            stop_atr="1.9",
+            stop_atr="2.7",
             mode=EntryMode.RETEST_CONFIRM,
             frac="0.40",
         ),

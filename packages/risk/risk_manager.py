@@ -304,8 +304,16 @@ class RiskManager:
                 str(self.cfg.entry.pre_breakout.min_stop_distance_percent)
             )
             return max(global_min, scout_min)
-        if entry_mode in (EntryMode.BREAKOUT_CONFIRM, EntryMode.RETEST_CONFIRM):
-            return global_min
+        if entry_mode == EntryMode.BREAKOUT_CONFIRM:
+            breakout_min = Decimal(
+                str(self.cfg.risk.breakout_min_stop_distance_percent)
+            )
+            return max(global_min, breakout_min)
+        if entry_mode == EntryMode.RETEST_CONFIRM:
+            retest_min = Decimal(
+                str(self.cfg.risk.retest_min_stop_distance_percent)
+            )
+            return max(global_min, retest_min)
         return Decimal(0)
 
     @staticmethod

@@ -61,6 +61,9 @@ class PositionManager:
         self._scenario_recovery: dict[str, int] = {}
         self._scenario_reduced: set[tuple[str, str]] = set()
         self._break_level_fail_closes: dict[tuple[str, str], tuple[int | None, int]] = {}
+        self._scout_scenario_invalid_closes: dict[
+            tuple[str, str], tuple[int | None, int]
+        ] = {}
         self._scout_ema_reclaim_counts: dict[str, int] = {}
         self._runner_ema_break_counts: dict[str, int] = {}
         self._runner_weak_signal_counts: dict[str, int] = {}
@@ -1332,6 +1335,21 @@ class PositionManager:
                         reason="RETEST_SCENARIO_INVALID_GRACE",
                     ),
                 )
+            if not self._scout_scenario_invalid_confirmed(position, candle):
+                return PositionAction(
+                    type=PositionActionType.SCOUT_EVENT,
+                    event_type="STAGNATION_DELAYED_BY_ENTRY_MODE",
+                    data=self._management_event_data(
+                        position,
+                        price=price,
+                        atr=atr,
+                        r=r,
+                        candle=candle,
+                        snapshot_5m=snapshot_5m,
+                        volume_ratio=volume_ratio,
+                        reason="SCOUT_SCENARIO_INVALID_CONFIRMING",
+                    ),
+                )
             # reduce 50% and open a 3-bar recovery window (impl doc §14.5)
             self._scenario_recovery[position.symbol] = 3
             self._scenario_reduced.add(scenario_key)
@@ -1351,6 +1369,7 @@ class PositionManager:
                     reason="SCENARIO_INVALID",
                 ),
             )
+        self._clear_scout_scenario_invalid(position)
         return None
 
     @staticmethod
@@ -1361,6 +1380,53 @@ class PositionManager:
         if position.entry_mode != EntryMode.RETEST_CONFIRM:
             return 0
         return max(0, int(self.cfg.stagnation_exit.retest_confirm.scenario_invalid_grace_bars))
+
+    def _scout_scenario_invalid_confirmed(
+        self, position: Position, candle: Candle | None
+    ) -> bool:
+        if position.entry_mode != EntryMode.PRE_BREAKOUT_SCOUT:
+            return True
+
+        key = self._position_scenario_key(position)
+        if self._break_level_invalid_confirmed(position, candle, key):
+            self._scout_scenario_invalid_closes.pop(key, None)
+            return True
+
+        open_time = (
+            candle.open_time_ms
+            if candle is not None and candle.open_time_ms > 0
+            else None
+        )
+        last_open_time, prev_count = self._scout_scenario_invalid_closes.get(
+            key, (None, 0)
+        )
+        if open_time is not None and open_time == last_open_time:
+            return prev_count >= 2
+
+        count = prev_count + 1
+        self._scout_scenario_invalid_closes[key] = (open_time, count)
+        return count >= 2
+
+    def _break_level_invalid_confirmed(
+        self, position: Position, candle: Candle | None, key: tuple[str, str]
+    ) -> bool:
+        if position.breakout_level is None or candle is None:
+            return False
+        wrong_side = (
+            candle.close < position.breakout_level
+            if position.side == PositionSide.LONG
+            else candle.close > position.breakout_level
+        )
+        if not wrong_side:
+            return False
+        _, count = self._break_level_fail_closes.get(key, (None, 0))
+        return count >= 2
+
+    def _clear_scout_scenario_invalid(self, position: Position) -> None:
+        if position.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            self._scout_scenario_invalid_closes.pop(
+                self._position_scenario_key(position), None
+            )
 
     def _scenario_invalid(
         self,
