@@ -59,6 +59,7 @@ class PositionManager:
         self._max_r: dict[str, Decimal] = {}
         self._stag_reduced: set[str] = set()
         self._scenario_recovery: dict[str, int] = {}
+        self._scenario_reduced: set[tuple[str, str]] = set()
         self._break_level_fail_closes: dict[str, int] = {}
         self._scout_ema_reclaim_counts: dict[str, int] = {}
         self._runner_ema_break_counts: dict[str, int] = {}
@@ -1310,6 +1311,11 @@ class PositionManager:
             return None
 
         if self._scenario_invalid(position, snapshot_5m, candle, volume_ratio):
+            scenario_key = self._position_scenario_key(position)
+            if scenario_key in self._scenario_reduced:
+                if r < Decimal("0.5"):
+                    self._scenario_recovery[position.symbol] = 3
+                return None
             grace = self._scenario_invalid_grace_bars(position)
             if grace > 0 and position.bars_since_entry <= grace:
                 return PositionAction(
@@ -1328,6 +1334,7 @@ class PositionManager:
                 )
             # reduce 50% and open a 3-bar recovery window (impl doc §14.5)
             self._scenario_recovery[position.symbol] = 3
+            self._scenario_reduced.add(scenario_key)
             return PositionAction(
                 type=PositionActionType.REDUCE,
                 qty=self._round_qty(position.qty * Decimal("0.5")),
@@ -1345,6 +1352,10 @@ class PositionManager:
                 ),
             )
         return None
+
+    @staticmethod
+    def _position_scenario_key(position: Position) -> tuple[str, str]:
+        return (position.symbol, position.opened_at.isoformat())
 
     def _scenario_invalid_grace_bars(self, position: Position) -> int:
         if position.entry_mode != EntryMode.RETEST_CONFIRM:

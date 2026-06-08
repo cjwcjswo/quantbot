@@ -181,6 +181,54 @@ def test_scenario_invalid_reduce_then_exit(config):
     assert last[0].reason == ExitReason.SCENARIO_INVALID
 
 
+def test_scenario_invalid_reduce_only_once_after_profit_recovery(config):
+    pm = PositionManager(config)
+    pos = _scout_pos(side=PositionSide.LONG, bars=4)
+    pos.scout_state = ScoutState.ACTIVE_TREND
+    hold_5m = snap(timeframe="5", close="101", ema20="100", atr="1", valid=True)
+    strong_counter = candle(
+        open_time_ms=60_000,
+        o="101",
+        h="101",
+        l="100",
+        c="100",
+    )
+
+    first = pm.evaluate(
+        pos,
+        price=Decimal("100.8"),
+        atr=Decimal("1"),
+        candle_1m=strong_counter,
+        snapshot_5m=hold_5m,
+        volume_ratio=Decimal("1.6"),
+    )
+    assert first[0].type == PositionActionType.REDUCE
+    assert first[0].reason == ExitReason.SCENARIO_INVALID
+
+    # Simulate the caller applying the first 50% reduce.
+    pos.qty = Decimal("5")
+    second = pm.evaluate(
+        pos,
+        price=Decimal("100.8"),
+        atr=Decimal("1"),
+        candle_1m=strong_counter,
+        snapshot_5m=hold_5m,
+        volume_ratio=Decimal("1.6"),
+    )
+    assert second == []
+
+    third = pm.evaluate(
+        pos,
+        price=Decimal("100.8"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=120_000, o="101", h="101", l="100", c="100"),
+        snapshot_5m=hold_5m,
+        volume_ratio=Decimal("1.6"),
+    )
+    assert third == []
+    assert pos.qty == Decimal("5")
+
+
 def test_retest_scenario_invalid_waits_grace_bars(config):
     pm = PositionManager(config)
     pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=0)
