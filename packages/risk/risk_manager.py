@@ -133,6 +133,8 @@ class RiskManager:
 
         # Leverage cap (§13.3)
         high_quality = self._is_high_quality(decision)
+        stop_metadata["high_quality"] = high_quality
+        stop_distance_percent = abs(entry_price - stop) / entry_price * Decimal(100)
         lev_cap = max_leverage(
             entry_mode=decision.entry_mode,
             atr_percent=self._atr_percent(atr, entry_price),
@@ -141,6 +143,16 @@ class RiskManager:
             config=risk,
             high_quality=high_quality,
         )
+        thin_stop_cap = self._thin_stop_leverage_cap(stop_distance_percent)
+        if thin_stop_cap is not None:
+            lev_cap = min(lev_cap, thin_stop_cap)
+            stop_metadata["thin_stop_leverage_cap_applied"] = True
+            stop_metadata["thin_stop_distance_percent"] = str(
+                risk.thin_stop_distance_percent
+            )
+            stop_metadata["thin_stop_max_leverage"] = str(risk.thin_stop_max_leverage)
+        else:
+            stop_metadata["thin_stop_leverage_cap_applied"] = False
         max_notional = ctx.equity * lev_cap
         target_notional_percent = self._target_notional_percent(
             decision,
@@ -176,7 +188,6 @@ class RiskManager:
         except RiskRejection as exc:
             return _reject(exc.reason, stop_metadata)
         if target_notional is not None:
-            stop_metadata["high_quality"] = high_quality
             stop_metadata["target_notional_percent"] = str(target_notional_percent)
             stop_metadata["target_notional"] = str(target_notional)
             stop_metadata["risk_based_notional"] = str(risk_based_notional)
@@ -275,11 +286,7 @@ class RiskManager:
         side: PositionSide,
         symbol_meta: SymbolMeta,
     ) -> Decimal | None:
-        if entry_mode != EntryMode.PRE_BREAKOUT_SCOUT:
-            return None
-        min_percent = Decimal(
-            str(self.cfg.entry.pre_breakout.min_stop_distance_percent)
-        )
+        min_percent = self._min_stop_distance_percent(entry_mode)
         if min_percent <= 0:
             return None
         offset = entry_price * min_percent / Decimal(100)
@@ -289,6 +296,17 @@ class RiskManager:
             else entry_price + offset
         )
         return self._round_stop_to_tick(raw, side, symbol_meta.tick_size)
+
+    def _min_stop_distance_percent(self, entry_mode: EntryMode) -> Decimal:
+        global_min = Decimal(str(self.cfg.risk.min_stop_distance_percent))
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            scout_min = Decimal(
+                str(self.cfg.entry.pre_breakout.min_stop_distance_percent)
+            )
+            return max(global_min, scout_min)
+        if entry_mode in (EntryMode.BREAKOUT_CONFIRM, EntryMode.RETEST_CONFIRM):
+            return global_min
+        return Decimal(0)
 
     @staticmethod
     def _round_stop_to_tick(
@@ -358,6 +376,13 @@ class RiskManager:
             return False
         return decision.score >= Decimal(str(config.high_quality_min_score))
 
+    def _thin_stop_leverage_cap(self, stop_distance_percent: Decimal) -> Decimal | None:
+        threshold = Decimal(str(self.cfg.risk.thin_stop_distance_percent))
+        cap = Decimal(str(self.cfg.risk.thin_stop_max_leverage))
+        if threshold <= 0 or cap <= 0:
+            return None
+        return cap if stop_distance_percent <= threshold else None
+
     @staticmethod
     def _risk_based_notional(
         *,
@@ -407,10 +432,8 @@ class RiskManager:
                 if structure_stop is not None
                 else None,
                 "min_stop_distance_percent": str(
-                    self.cfg.entry.pre_breakout.min_stop_distance_percent
-                )
-                if decision.entry_mode == EntryMode.PRE_BREAKOUT_SCOUT
-                else None,
+                    self._min_stop_distance_percent(decision.entry_mode)
+                ),
                 "min_distance_stop_price": str(min_distance_stop)
                 if min_distance_stop is not None
                 else None,

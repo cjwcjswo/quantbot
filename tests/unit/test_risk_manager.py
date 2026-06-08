@@ -85,8 +85,8 @@ def test_tpsl_prices_are_rounded_to_tick(config):
     )
 
     assert d.approved
-    assert d.stop_loss_price == Decimal("0.1593")
-    assert d.take_profit_price == Decimal("0.1605")
+    assert d.stop_loss_price == Decimal("0.1592")
+    assert d.take_profit_price == Decimal("0.1607")
 
 
 def test_stop_too_tight(config):
@@ -162,6 +162,75 @@ def test_tiny_tick_scout_min_stop_does_not_round_inside_min_distance(config):
     assert d.stop_loss_price == Decimal("0.002738")
     assert d.stop_metadata["min_distance_stop_price"] == "0.002738"
     assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.45")
+
+
+def test_retest_min_stop_distance_percent_widens_low_atr_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="0.85",
+            score="9",
+        ),
+        atr="0.117",
+        entry="64.03",
+        meta=symbol_meta(tick="0.01", step="0.01", min_qty="0.01"),
+        ctx=RiskContext(equity=Decimal("116")),
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("63.83")
+    assert d.stop_metadata["atr_stop_price"] == "63.91"
+    assert d.stop_metadata["min_stop_distance_percent"] == "0.3"
+    assert d.stop_metadata["min_distance_stop_price"] == "63.83"
+    assert d.stop_metadata["min_distance_stop_applied"] is True
+    assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.30")
+    assert d.qty < Decimal("20.56")
+    assert d.leverage < Decimal("12")
+
+
+def test_breakout_min_stop_distance_percent_widens_low_atr_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.BREAKOUT_CONFIRM,
+            frac="0.75",
+        ),
+        atr="0.18",
+        entry="100",
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("99.7")
+    assert d.stop_metadata["atr_stop_price"] == "99.8"
+    assert d.stop_metadata["min_distance_stop_price"] == "99.7"
+    assert d.stop_metadata["min_distance_stop_applied"] is True
+
+
+def test_thin_stop_caps_high_quality_leverage(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.RETEST_CONFIRM,
+            frac="1.0",
+            score="9",
+        ),
+        atr="0.3",
+        entry="100",
+        ctx=RiskContext(equity=Decimal("100")),
+        use_target_notional=True,
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("99.7")
+    assert d.leverage == Decimal("8")
+    assert d.notional == Decimal("800.0")
+    assert d.stop_metadata["high_quality"] is True
+    assert d.stop_metadata["thin_stop_leverage_cap_applied"] is True
+    assert d.stop_metadata["thin_stop_max_leverage"] == "8"
 
 
 def test_scout_structure_stop_can_widen_short_stop(config):

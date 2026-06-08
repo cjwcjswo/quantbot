@@ -95,6 +95,10 @@ def test_loads_repo_config():
     assert cfg.risk.breakout_max_leverage == 9
     assert cfg.risk.retest_max_leverage == 10
     assert cfg.risk.high_atr_derisk_threshold_percent == 3.5
+    assert cfg.risk.min_stop_distance_percent == 0.30
+    assert cfg.risk.max_stop_distance_atr == 1.8
+    assert cfg.risk.thin_stop_distance_percent == 0.35
+    assert cfg.risk.thin_stop_max_leverage == 8
     assert cfg.risk.max_symbol_risk_percent == 3.0
     assert cfg.risk.max_total_open_risk_percent == 10.0
     assert cfg.risk.target_notional_percent.enabled is True

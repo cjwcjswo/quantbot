@@ -193,9 +193,12 @@ risk:
   daily_loss_derisk_percent: 3.0
   daily_loss_max_leverage: 2
   min_stop_distance_atr: 0.5
-  max_stop_distance_atr: 1.5
+  min_stop_distance_percent: 0.30
+  max_stop_distance_atr: 1.8
   scout_max_stop_distance_atr: 3.5
   retest_max_stop_distance_atr: 1.8
+  thin_stop_distance_percent: 0.35
+  thin_stop_max_leverage: 8
   isolated_margin: true
   target_notional_percent:
     enabled: true

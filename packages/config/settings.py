@@ -259,9 +259,12 @@ class RiskSection(_Section):
     daily_loss_derisk_percent: float = 3.0
     daily_loss_max_leverage: int = 2
     min_stop_distance_atr: float = 0.5
-    max_stop_distance_atr: float = 1.5
+    min_stop_distance_percent: float = 0.30
+    max_stop_distance_atr: float = 1.8
     scout_max_stop_distance_atr: float = 3.5
     retest_max_stop_distance_atr: float = 1.8
+    thin_stop_distance_percent: float = 0.35
+    thin_stop_max_leverage: int = 8
     isolated_margin: bool = True
     target_notional_percent: TargetNotionalPercentSection = (
         TargetNotionalPercentSection()
