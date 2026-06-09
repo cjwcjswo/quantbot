@@ -178,7 +178,7 @@ orders:
 risk:
   account_risk_per_trade_percent: 2.5
   daily_max_loss_percent: 5.0
-  intraday_drawdown_percent: 3.0
+  intraday_drawdown_percent: 5.0
   max_symbol_risk_percent: 3.0
   max_total_open_risk_percent: 10.0
   max_same_direction_positions: 4
@@ -311,7 +311,7 @@ cooldown:
 
 global_kill_switch:
   daily_loss_percent: 5.0
-  intraday_drawdown_percent: 3.0
+  intraday_drawdown_percent: 5.0
   consecutive_losses: 4
   order_failures_in_5min: 3
   websocket_disconnects_in_10min: 3
