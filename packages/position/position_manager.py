@@ -1335,6 +1335,26 @@ class PositionManager:
                         reason="RETEST_SCENARIO_INVALID_GRACE",
                     ),
                 )
+            if self._mild_retest_break_level_invalid(
+                position, r, snapshot_5m, candle, volume_ratio
+            ):
+                tighten_bars = self.cfg.stagnation_exit.retest_confirm.tighten_after_bars
+                if position.bars_since_entry < tighten_bars:
+                    return PositionAction(
+                        type=PositionActionType.SCOUT_EVENT,
+                        event_type="STAGNATION_DELAYED_BY_ENTRY_MODE",
+                        data=self._management_event_data(
+                            position,
+                            price=price,
+                            atr=atr,
+                            r=r,
+                            candle=candle,
+                            snapshot_5m=snapshot_5m,
+                            volume_ratio=volume_ratio,
+                            reason="RETEST_BREAK_LEVEL_INVALID_DELAYED",
+                        ),
+                    )
+                return None
             if not self._scout_scenario_invalid_confirmed(position, candle):
                 return PositionAction(
                     type=PositionActionType.SCOUT_EVENT,
@@ -1380,6 +1400,52 @@ class PositionManager:
         if position.entry_mode != EntryMode.RETEST_CONFIRM:
             return 0
         return max(0, int(self.cfg.stagnation_exit.retest_confirm.scenario_invalid_grace_bars))
+
+    def _mild_retest_break_level_invalid(
+        self,
+        position: Position,
+        r: Decimal,
+        snapshot_5m: IndicatorSnapshot | None,
+        candle: Candle | None,
+        volume_ratio: Decimal | None,
+    ) -> bool:
+        if position.entry_mode != EntryMode.RETEST_CONFIRM:
+            return False
+        if r <= Decimal("-0.5"):
+            return False
+        return not self._hard_scenario_invalid(
+            position, snapshot_5m, candle, volume_ratio
+        )
+
+    def _hard_scenario_invalid(
+        self,
+        position: Position,
+        snapshot_5m: IndicatorSnapshot | None,
+        candle: Candle | None,
+        volume_ratio: Decimal | None,
+    ) -> bool:
+        long = position.side == PositionSide.LONG
+        if snapshot_5m is not None and snapshot_5m.ema20 is not None:
+            if long and snapshot_5m.close < snapshot_5m.ema20:
+                return True
+            if not long and snapshot_5m.close > snapshot_5m.ema20:
+                return True
+        if candle is None or volume_ratio is None:
+            return False
+        m = metrics_of(candle)
+        if not m.valid:
+            return False
+        if m.body_ratio < Decimal("0.55") or volume_ratio < Decimal("1.5"):
+            return False
+        if long:
+            return (
+                candle.close < candle.open
+                and m.close_position_in_range <= Decimal("0.25")
+            )
+        return (
+            candle.close > candle.open
+            and m.close_position_in_range >= Decimal("0.75")
+        )
 
     def _scout_scenario_invalid_confirmed(
         self, position: Position, candle: Candle | None

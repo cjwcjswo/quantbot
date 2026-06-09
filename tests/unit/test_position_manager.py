@@ -257,6 +257,58 @@ def test_retest_scenario_invalid_waits_grace_bars(config):
     assert reduced[0].reason == ExitReason.SCENARIO_INVALID
 
 
+def test_retest_mild_break_level_failure_is_not_reduced_immediately(config):
+    pm = PositionManager(config)
+    pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=3)
+    pos.breakout_level = Decimal("100")
+    valid_5m = snap(timeframe="5", close="101", ema20="100", atr="1", valid=True)
+
+    first = pm.evaluate(
+        pos,
+        price=Decimal("99.8"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=60_000, h="100.1", l="99.7", c="99.8"),
+        snapshot_5m=valid_5m,
+    )
+    assert all(a.reason != ExitReason.SCENARIO_INVALID for a in first)
+
+    delayed = pm.evaluate(
+        pos,
+        price=Decimal("99.7"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=120_000, h="100.1", l="99.6", c="99.7"),
+        snapshot_5m=valid_5m,
+    )
+    assert delayed[0].type == PositionActionType.SCOUT_EVENT
+    assert delayed[0].event_type == "STAGNATION_DELAYED_BY_ENTRY_MODE"
+    assert delayed[0].data["reason"] == "RETEST_BREAK_LEVEL_INVALID_DELAYED"
+
+
+def test_retest_mild_break_level_failure_lets_stagnation_tighten(config):
+    pm = PositionManager(config)
+    pos = _pos(mode=EntryMode.RETEST_CONFIRM, bars=6)
+    pos.breakout_level = Decimal("100")
+    valid_5m = snap(timeframe="5", close="101", ema20="100", atr="1", valid=True)
+
+    pm.evaluate(
+        pos,
+        price=Decimal("99.8"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=60_000, h="100.1", l="99.7", c="99.8"),
+        snapshot_5m=valid_5m,
+    )
+    tightened = pm.evaluate(
+        pos,
+        price=Decimal("99.8"),
+        atr=Decimal("1"),
+        candle_1m=candle(open_time_ms=120_000, h="100.1", l="99.7", c="99.8"),
+        snapshot_5m=valid_5m,
+    )
+
+    assert tightened[0].type == PositionActionType.TRAIL_UPDATE
+    assert tightened[0].new_stop == Decimal("99.5")
+
+
 def test_scenario_invalid_after_two_closes_below_breakout_level(config):
     pm = PositionManager(config)
     pos = _pos(mode=EntryMode.BREAKOUT_CONFIRM)
