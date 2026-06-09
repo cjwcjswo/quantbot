@@ -49,7 +49,7 @@ def test_order_failures_window(config):
 
 def test_daily_loss_trip(config):
     ks = GlobalKillSwitch(config.global_kill_switch)
-    ks.update_pnl(daily_loss_percent=5.0, intraday_drawdown_percent=0.0)
+    ks.update_pnl(daily_loss_percent=7.0, intraday_drawdown_percent=0.0)
     assert ks.evaluate() == "DAILY_LOSS"
 
 

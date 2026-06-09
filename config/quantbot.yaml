@@ -80,6 +80,7 @@ entry:
     position_fraction: 0.40
     stop_atr: 0.7
     min_stop_distance_percent: 0.45
+    min_stop_distance_atr: 1.8
     min_volume_ratio: 0.80
     max_distance_to_box_atr: 0.65
     require_compression: false
@@ -177,8 +178,8 @@ orders:
 
 risk:
   account_risk_per_trade_percent: 2.5
-  daily_max_loss_percent: 5.0
-  intraday_drawdown_percent: 5.0
+  daily_max_loss_percent: 7.0
+  intraday_drawdown_percent: 7.0
   max_symbol_risk_percent: 3.0
   max_total_open_risk_percent: 10.0
   max_same_direction_positions: 4
@@ -310,8 +311,8 @@ cooldown:
   entry_mode_cooldown_after_loss_min: 20
 
 global_kill_switch:
-  daily_loss_percent: 5.0
-  intraday_drawdown_percent: 5.0
+  daily_loss_percent: 7.0
+  intraday_drawdown_percent: 7.0
   consecutive_losses: 4
   order_failures_in_5min: 3
   websocket_disconnects_in_10min: 3

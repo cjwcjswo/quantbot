@@ -164,6 +164,35 @@ def test_tiny_tick_scout_min_stop_does_not_round_inside_min_distance(config):
     assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.45")
 
 
+def test_scout_min_stop_distance_atr_widens_home_like_stop(config):
+    d = _approve(
+        config,
+        decision=_decision(
+            stop_atr="1.0",
+            mode=EntryMode.PRE_BREAKOUT_SCOUT,
+            frac="0.60",
+            direction=SignalDirection.SHORT,
+            symbol="HOMEUSDT",
+        ),
+        atr="0.000121",
+        entry="0.028622",
+        meta=symbol_meta(
+            symbol="HOMEUSDT",
+            tick="0.000001",
+            step="10",
+            min_qty="10",
+        ),
+        ctx=RiskContext(equity=Decimal("111.248536")),
+    )
+
+    assert d.approved
+    assert d.stop_loss_price == Decimal("0.028840")
+    assert d.stop_metadata["min_distance_stop_price"] == "0.028840"
+    assert d.stop_metadata["min_distance_stop_applied"] is True
+    assert Decimal(d.stop_metadata["stop_distance_percent"]) >= Decimal("0.75")
+    assert Decimal(d.qty) < Decimal("12640")
+
+
 def test_retest_min_stop_distance_percent_widens_low_atr_stop(config):
     d = _approve(
         config,
@@ -350,7 +379,7 @@ def test_wider_retest_stop_reduces_qty(config):
 
 
 def test_daily_loss_blocks(config):
-    ctx = RiskContext(equity=Decimal("10000"), daily_loss_percent=Decimal("5.0"))
+    ctx = RiskContext(equity=Decimal("10000"), daily_loss_percent=Decimal("7.0"))
     d = _approve(config, ctx=ctx)
     assert not d.approved and d.reason == "DAILY_LOSS_LIMIT"
 

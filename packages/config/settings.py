@@ -116,6 +116,7 @@ class PreBreakoutEntry(_Section):
     position_fraction: float = 0.40
     stop_atr: float = 0.7
     min_stop_distance_percent: float = 0.45
+    min_stop_distance_atr: float = 1.8
     min_volume_ratio: float = 0.80
     max_distance_to_box_atr: float = 0.65
     require_compression: bool = False

@@ -92,7 +92,7 @@ class RiskManager:
         structure_stop = self._structure_stop_price(decision, side, symbol_meta)
         selected_stop = self._select_stop(side, atr_stop, structure_stop)
         min_distance_stop = self._min_distance_stop_price(
-            decision.entry_mode, entry_price, side, symbol_meta
+            decision.entry_mode, entry_price, atr, side, symbol_meta
         )
         stop = self._select_stop(side, selected_stop, min_distance_stop)
         stop_metadata = self._with_stop_metadata(
@@ -283,19 +283,39 @@ class RiskManager:
         self,
         entry_mode: EntryMode,
         entry_price: Decimal,
+        atr: Decimal,
         side: PositionSide,
         symbol_meta: SymbolMeta,
     ) -> Decimal | None:
         min_percent = self._min_stop_distance_percent(entry_mode)
-        if min_percent <= 0:
+        candidates: list[Decimal] = []
+        if min_percent > 0:
+            offset = entry_price * min_percent / Decimal(100)
+            raw = (
+                entry_price - offset
+                if side == PositionSide.LONG
+                else entry_price + offset
+            )
+            candidates.append(
+                self._round_stop_to_tick(raw, side, symbol_meta.tick_size)
+            )
+        min_atr = self._min_stop_distance_atr(entry_mode)
+        if min_atr > 0:
+            offset = atr * min_atr
+            raw = (
+                entry_price - offset
+                if side == PositionSide.LONG
+                else entry_price + offset
+            )
+            candidates.append(
+                self._round_stop_to_tick(raw, side, symbol_meta.tick_size)
+            )
+        if not candidates:
             return None
-        offset = entry_price * min_percent / Decimal(100)
-        raw = (
-            entry_price - offset
-            if side == PositionSide.LONG
-            else entry_price + offset
-        )
-        return self._round_stop_to_tick(raw, side, symbol_meta.tick_size)
+        stop = candidates[0]
+        for candidate in candidates[1:]:
+            stop = self._select_stop(side, stop, candidate)
+        return stop
 
     def _min_stop_distance_percent(self, entry_mode: EntryMode) -> Decimal:
         global_min = Decimal(str(self.cfg.risk.min_stop_distance_percent))
@@ -314,6 +334,11 @@ class RiskManager:
                 str(self.cfg.risk.retest_min_stop_distance_percent)
             )
             return max(global_min, retest_min)
+        return Decimal(0)
+
+    def _min_stop_distance_atr(self, entry_mode: EntryMode) -> Decimal:
+        if entry_mode == EntryMode.PRE_BREAKOUT_SCOUT:
+            return Decimal(str(self.cfg.entry.pre_breakout.min_stop_distance_atr))
         return Decimal(0)
 
     @staticmethod
@@ -441,6 +466,9 @@ class RiskManager:
                 else None,
                 "min_stop_distance_percent": str(
                     self._min_stop_distance_percent(decision.entry_mode)
+                ),
+                "min_stop_distance_atr": str(
+                    self._min_stop_distance_atr(decision.entry_mode)
                 ),
                 "min_distance_stop_price": str(min_distance_stop)
                 if min_distance_stop is not None

@@ -41,6 +41,7 @@ def test_loads_repo_config():
     assert cfg.entry.pre_breakout.min_score == 6
     assert cfg.entry.pre_breakout.position_fraction == 0.40
     assert cfg.entry.pre_breakout.min_stop_distance_percent == 0.45
+    assert cfg.entry.pre_breakout.min_stop_distance_atr == 1.8
     assert cfg.entry.pre_breakout.min_volume_ratio == 0.80
     assert cfg.entry.pre_breakout.max_distance_to_box_atr == 0.65
     assert cfg.entry.pre_breakout.require_compression is False
