@@ -294,6 +294,79 @@ async def test_process_symbol_refreshes_stale_tickers(redis):
     await rt.shutdown()
 
 
+async def test_trading_loop_manages_open_positions_when_risk_locked(redis):
+    rt = _runtime(redis, mode=BotMode.PAPER)
+    rt.state_machine.force(BotState.RISK_LOCKED, reason="test")
+    rt.runtime_state.positions["BTCUSDT"] = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("1"),
+        avg_entry_price=Decimal("100"),
+        stop_loss_price=Decimal("99"),
+        take_profit_price=Decimal("102"),
+        initial_risk_per_unit=Decimal("1"),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM,
+    )
+    called = []
+
+    async def fake_management_cycle():
+        called.append(True)
+        rt.request_shutdown()
+
+    rt._management_cycle = fake_management_cycle
+
+    await rt._trading_loop()
+
+    assert called == [True]
+
+
+async def test_management_cycle_does_not_evaluate_new_entries(redis):
+    class CaptureTrading:
+        def __init__(self):
+            self.manage_calls = []
+
+        async def update_post_exit_mfe(self, *args, **kwargs):
+            return None
+
+        async def manage(self, **kwargs):
+            self.manage_calls.append(kwargs)
+            return []
+
+    gw = FakeGateway()
+    gw.set_instruments([symbol_meta(symbol="BTCUSDT", launch_time_ms=0)])
+    gw.set_ticker(ticker(symbol="BTCUSDT", bid="100", ask="100.1",
+                         turnover_24h="100000000"))
+    for tf in ("1", "5", "15"):
+        gw.set_kline("BTCUSDT", tf,
+                     series_from_closes(["100"] * 120, symbol="BTCUSDT", interval=tf))
+    rt = _runtime(redis, gw, mode=BotMode.PAPER)
+    await rt.startup()
+    rt.state_machine.force(BotState.RISK_LOCKED, reason="test")
+    rt.runtime_state.positions["BTCUSDT"] = Position(
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        status=PositionStatus.ACTIVE,
+        source=PositionSource.BOT,
+        qty=Decimal("1"),
+        avg_entry_price=Decimal("100"),
+        stop_loss_price=Decimal("99"),
+        take_profit_price=Decimal("102"),
+        initial_risk_per_unit=Decimal("1"),
+        entry_mode=EntryMode.BREAKOUT_CONFIRM,
+    )
+    capture = CaptureTrading()
+    rt._trading = capture
+
+    await rt._management_cycle()
+
+    assert len(capture.manage_calls) == 1
+    assert capture.manage_calls[0]["symbol"] == "BTCUSDT"
+    assert gw.orderbook_calls == []
+    await rt.shutdown()
+
+
 async def test_process_symbol_passes_only_confirmed_candles_to_entry(redis):
     class CaptureTrading:
         def __init__(self):

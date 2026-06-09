@@ -608,9 +608,13 @@ class BotRuntime:
         if was_running and self.state_machine.state == BotState.RECONCILING:
             self.state_machine.transition(BotState.RUNNING, reason="ws recovered")
 
-    async def _emit_event(self, event_type: BotEventType, message: str) -> None:
+    async def _emit_event(
+        self, event_type: BotEventType, message: str, data: dict | None = None
+    ) -> None:
         if self._event_bus is not None:
-            await self._event_bus.publish(BotEvent(type=event_type, message=message))
+            await self._event_bus.publish(
+                BotEvent(type=event_type, message=message, data=data or {})
+            )
 
     def _start_market_ws(self) -> None:
         """Best-effort live WebSocket subscription (no-op if unsupported)."""
@@ -698,16 +702,39 @@ class BotRuntime:
         """
         interval = max(2, self.config.bot.heartbeat_interval_sec)
         while not self._shutdown.is_set():
-            if self.state_machine.state == BotState.RUNNING:
+            if self.state_machine.can_enter_new_position():
                 try:
                     await self._trading_cycle()
                 except Exception:
                     logger.exception("trading cycle failed")
+            elif (
+                self.state_machine.can_manage_positions()
+                and self.runtime_state.has_open_bot_position()
+            ):
+                try:
+                    await self._management_cycle()
+                except Exception:
+                    logger.exception("position management cycle failed")
             try:
                 await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
                 return
             except asyncio.TimeoutError:
                 pass
+
+    async def _management_cycle(self) -> None:
+        """Manage existing bot positions while new entries are blocked."""
+        assert self._trading is not None and self._collector is not None
+        await self._collector.refresh_tickers()
+        equity = await self._current_equity()
+        self._last_equity = equity
+        symbols = list(
+            dict.fromkeys(p.symbol for p in self.runtime_state.active_bot_positions())
+        )
+        for symbol in symbols:
+            try:
+                await self._process_symbol(symbol, equity)
+            except Exception:
+                logger.exception("position %s management failed", symbol)
 
     async def _trading_cycle(self) -> None:
         assert self._trading is not None and self._collector is not None
@@ -1286,7 +1313,14 @@ class BotRuntime:
             return
         if reason != self._last_kill_switch_trip_reason:
             self._last_kill_switch_trip_reason = reason
-            await self._emit_event(BotEventType.KILL_SWITCH_TRIPPED, reason)
+            snapshot = (
+                self._kill_switch.snapshot() if self._kill_switch is not None else {}
+            )
+            await self._emit_event(
+                BotEventType.KILL_SWITCH_TRIPPED,
+                reason,
+                data={"reason": reason, **snapshot},
+            )
         if self.state_machine.state == BotState.RUNNING:
             self.state_machine.transition(BotState.RISK_LOCKED, reason=reason)
 
